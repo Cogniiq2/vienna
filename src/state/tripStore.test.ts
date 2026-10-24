@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChapterId, QuestionId } from '../config/chapters';
-import { BackendError, type RemoteSnapshot, type TripBackend } from '../lib/backend';
+import { BackendError, type LiveMessage, type RemoteAsset, type RemoteSnapshot, type TripBackend } from '../lib/backend';
 import { photoStore } from '../lib/photoStore';
-import { mergeProgress, progressAtChapter, type TripProgress } from '../lib/progress';
+import { mergeProgress, progressAtStep, stepIndexOfChapter, type TripProgress } from '../lib/progress';
 import { TripStore } from './tripStore';
 
 /** In-Memory-„Server“, der Netzprobleme simulieren kann. */
@@ -10,20 +10,30 @@ class FakeBackend implements TripBackend {
   readonly mode = 'supabase' as const;
   online = true;
   invalid = false;
-  progress: TripProgress = { phase: 'opening', completed: [], startedAt: null, finishedAt: null, updatedAt: new Date(0).toISOString() };
+  progress: TripProgress = { phase: 'opening', completed: [], seen: [], startedAt: null, finishedAt: null, updatedAt: new Date(0).toISOString() };
   responses: Record<string, { value: string; updatedAt: string }> = {};
   uploads: Partial<Record<ChapterId, { path: string; capturedAt: string }>> = {};
   uploadCalls = 0;
+  messages: LiveMessage[] = [];
+  assets: RemoteSnapshot['assets'] = {};
+  devices: string[] = [];
 
   private check() {
     if (!this.online) throw new BackendError('unreachable', 'offline');
   }
-  connect(): Promise<RemoteSnapshot> {
+  connect(_token: string, device: string): Promise<RemoteSnapshot> {
     if (this.invalid) return Promise.reject(new BackendError('invalid-token'));
     this.check();
+    this.devices.push(device);
     const uploads: RemoteSnapshot['uploads'] = {};
     for (const [id, u] of Object.entries(this.uploads)) uploads[id as ChapterId] = { chapterId: id as ChapterId, ...u };
-    return Promise.resolve({ progress: this.progress, responses: { ...this.responses }, uploads });
+    return Promise.resolve({
+      progress: this.progress,
+      responses: { ...this.responses },
+      uploads,
+      messages: this.messages.map((m) => ({ ...m })),
+      assets: { ...this.assets },
+    });
   }
   saveProgress(p: TripProgress) {
     this.check();
@@ -44,6 +54,15 @@ class FakeBackend implements TripBackend {
   }
   downloadPhoto() {
     return Promise.resolve(new Blob(['x'], { type: 'image/jpeg' }));
+  }
+  markMessageRead(id: string) {
+    this.check();
+    this.messages = this.messages.map((m) => (m.id === id ? { ...m, readAt: new Date().toISOString() } : m));
+    return Promise.resolve();
+  }
+  assetUrl(path: string) {
+    this.check();
+    return Promise.resolve(`https://signed.example/${path}?token=x`);
   }
   reset() {
     this.progress = { ...this.progress, phase: 'opening', completed: [] };
@@ -110,11 +129,11 @@ describe('TripStore', () => {
 
   it('adopts progress from the other parent’s phone on a fresh device', async () => {
     const backend = new FakeBackend();
-    backend.progress = progressAtChapter(3);
+    backend.progress = progressAtStep(stepIndexOfChapter('vienna') + 1);
     backend.uploads.morning = { path: 'trip/morning-x.jpg', capturedAt: new Date().toISOString() };
     const store = new TripStore(nextToken(), backend);
     await store.init();
-    expect(store.getState().progress.completed).toEqual(['morning', 'mission', 'tennis']);
+    expect(store.getState().progress.completed).toEqual(['morning', 'mission', 'vienna']);
     expect(store.getState().photos.morning).toMatchObject({ status: 'remote', hasLocal: false });
     expect(await store.getPhotoBlob('morning')).toBeInstanceOf(Blob);
     store.dispose();
@@ -143,6 +162,62 @@ describe('TripStore', () => {
     expect(store.getState().photos).toEqual({});
     expect(await photoStore.list(key)).toEqual([]);
     expect(backend.uploads).toEqual({});
+    store.dispose();
+  });
+
+  it('delivers live messages on the next sync and marks them read on the server', async () => {
+    const backend = new FakeBackend();
+    const store = new TripStore(nextToken(), backend);
+    await store.init();
+    expect(store.getState().messages).toEqual([]);
+    backend.messages = [{ id: 'm1', body: 'Видимо да сте преживели тенис 😄', heart: true, createdAt: new Date().toISOString(), readAt: null }];
+    await store.refresh();
+    expect(store.getState().messages[0]?.body).toContain('тенис');
+    store.markMessageRead('m1');
+    expect(store.getState().messages[0]?.readAt).not.toBeNull();
+    await vi.waitFor(() => expect(backend.messages[0]?.readAt).not.toBeNull());
+    expect(backend.devices[0]).toMatch(/ · /);
+    store.dispose();
+  });
+
+  it('keeps a message read locally even while offline', async () => {
+    const backend = new FakeBackend();
+    backend.messages = [{ id: 'm2', body: 'Hallo', heart: false, createdAt: new Date().toISOString(), readAt: null }];
+    const key = nextToken();
+    const store = new TripStore(key, backend);
+    await store.init();
+    backend.online = false;
+    store.markMessageRead('m2');
+    store.dispose();
+    backend.online = true;
+    const again = new TripStore(key, backend);
+    await again.init();
+    await vi.waitFor(() => expect(backend.messages[0]?.readAt).not.toBeNull());
+    expect(again.getState().messages[0]?.readAt).not.toBeNull();
+    again.dispose();
+  });
+
+  it('resolves private family assets via signed URLs and never fails for missing ones', async () => {
+    const backend = new FakeBackend();
+    const wedding: RemoteAsset = { slot: 'wedding', path: 'trip/wedding-1.jpg', mime: 'image/jpeg' };
+    backend.assets = { wedding };
+    const store = new TripStore(nextToken(), backend);
+    await store.init();
+    expect(store.hasAsset('wedding')).toBe(true);
+    expect(await store.getAssetUrl('wedding')).toContain('signed.example/trip/wedding-1.jpg');
+    expect(store.hasAsset('gradskiKlub')).toBe(false);
+    expect(await store.getAssetUrl('gradskiKlub')).toBeNull();
+    expect(await store.getAssetBlob('gradskiKlub')).toBeNull();
+    store.dispose();
+  });
+
+  it('remembers seen memories and syncs them', async () => {
+    const backend = new FakeBackend();
+    const store = new TripStore(nextToken(), backend);
+    await store.init();
+    store.advanceTo('journey');
+    store.markSeen('interlude:gradskiKlub');
+    await vi.waitFor(() => expect(backend.progress.seen).toContain('interlude:gradskiKlub'));
     store.dispose();
   });
 });

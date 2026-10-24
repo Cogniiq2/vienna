@@ -148,22 +148,52 @@ export async function processPhoto(file: File): Promise<ProcessedImage> {
   }
 }
 
-/** Schneidet ein Foto für einen PDF-Rahmen zu und liefert JPEG-Bytes. */
-export async function cropForFrame(blob: Blob, aspect: number, maxEdge: number): Promise<Uint8Array> {
+/**
+ * Schneidet ein Foto für einen PDF-Rahmen zu und liefert JPEG-Bytes.
+ * `archival`: alte Familienfotos bekommen nur im Album eine leichte Wärme und Vignette
+ * (die Originaldatei bleibt unverändert).
+ */
+export async function cropForFrame(
+  blob: Blob,
+  aspect: number,
+  maxEdge: number,
+  options: { archival?: boolean; fit?: 'cover' | 'contain' } = {},
+): Promise<{ bytes: Uint8Array; width: number; height: number }> {
   const drawable = await decode(blob);
   try {
-    const crop = coverCrop(drawable.width, drawable.height, aspect);
+    const crop =
+      options.fit === 'contain'
+        ? { sx: 0, sy: 0, sw: drawable.width, sh: drawable.height }
+        : coverCrop(drawable.width, drawable.height, aspect);
     const target = fitWithin(crop.sw, crop.sh, maxEdge);
     const canvas = drawToCanvas(drawable, target.width, target.height, crop);
     try {
+      if (options.archival) warmAndVignette(canvas);
       const out = await canvasToBlob(canvas, 0.9);
-      return new Uint8Array(await out.arrayBuffer());
+      return { bytes: new Uint8Array(await out.arrayBuffer()), width: target.width, height: target.height };
     } finally {
       releaseCanvas(canvas);
     }
   } finally {
     drawable.release();
   }
+}
+
+function warmAndVignette(canvas: HTMLCanvasElement) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const { width, height } = canvas;
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = 'rgba(232, 214, 186, 0.28)';
+  ctx.fillRect(0, 0, width, height);
+  ctx.globalCompositeOperation = 'source-over';
+  const vignette = ctx.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.35, width / 2, height / 2, Math.max(width, height) * 0.75);
+  vignette.addColorStop(0, 'rgba(40, 30, 20, 0)');
+  vignette.addColorStop(1, 'rgba(40, 30, 20, 0.22)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, width, height);
+  ctx.restore();
 }
 
 /** Debug: erzeugt ein ruhiges Platzhalter-Foto. */

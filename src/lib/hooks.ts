@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ChapterId } from '../config/chapters';
+import type { AssetSlot } from '../config/family';
 import type { PhotoEntry, TripStore } from '../state/tripStore';
 
 function subscribeOnline(callback: () => void) {
@@ -66,6 +67,34 @@ export function usePhotoUrl(
   }, [store, chapterId, key]);
 
   if (!key) return { url: null, loading: false };
+  if (result?.key !== key) return { url: null, loading: true };
+  return { url: result.url, loading: false };
+}
+
+/** URL eines Familien-Assets (privat signiert oder konfiguriert). `null` = nicht vorhanden. */
+export function useAssetUrl(store: TripStore, slot: AssetSlot | null): { url: string | null; loading: boolean } {
+  const { assets } = useSyncExternalStore(store.subscribe, store.getState, store.getState);
+  const remotePath = slot ? (assets[slot]?.path ?? '') : '';
+  const key = slot ? `${slot}:${remotePath}:${store.hasAsset(slot) ? 1 : 0}` : '';
+  const [result, setResult] = useState<{ key: string; url: string | null } | null>(null);
+
+  useEffect(() => {
+    if (!slot || !key) return;
+    let cancelled = false;
+    store
+      .getAssetUrl(slot)
+      .then((url) => {
+        if (!cancelled) setResult({ key, url });
+      })
+      .catch(() => {
+        if (!cancelled) setResult({ key, url: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [store, slot, key]);
+
+  if (!slot || !store.hasAsset(slot)) return { url: null, loading: false };
   if (result?.key !== key) return { url: null, loading: true };
   return { url: result.url, loading: false };
 }

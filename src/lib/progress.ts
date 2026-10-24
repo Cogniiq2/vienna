@@ -1,4 +1,4 @@
-import { CHAPTER_IDS, isChapterId, isQuestionId, type ChapterId, type QuestionId } from '../config/chapters';
+import { CHAPTER_IDS, isChapterId, isQuestionId, seenKey, STORY, type ChapterId, type QuestionId, type StoryStep } from '../config/chapters';
 
 export const PHASES = ['opening', 'intro', 'journey', 'finale'] as const;
 export type Phase = (typeof PHASES)[number];
@@ -7,6 +7,8 @@ export interface TripProgress {
   phase: Phase;
   /** Abgeschlossene Kapitel, immer in kanonischer Reihenfolge. */
   completed: ChapterId[];
+  /** Gesehene Erinnerungsseiten / Finale-Stationen (z. B. "interlude:wedding"). Nur wachsend. */
+  seen: string[];
   startedAt: string | null;
   finishedAt: string | null;
   updatedAt: string;
@@ -19,7 +21,7 @@ export interface ResponseEntry {
 export type Responses = Partial<Record<QuestionId, ResponseEntry>>;
 
 export function initialProgress(now = new Date().toISOString()): TripProgress {
-  return { phase: 'opening', completed: [], startedAt: null, finishedAt: null, updatedAt: now };
+  return { phase: 'opening', completed: [], seen: [], startedAt: null, finishedAt: null, updatedAt: now };
 }
 
 export function phaseRank(phase: Phase): number {
@@ -32,6 +34,12 @@ function isPhase(value: unknown): value is Phase {
 
 function isIso(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(Date.parse(value));
+}
+
+const SEEN_PATTERN = /^[a-z]+:[A-Za-z]+$/;
+
+function sortSeen(keys: Iterable<string>): string[] {
+  return [...new Set(keys)].filter((k) => SEEN_PATTERN.test(k)).sort();
 }
 
 function sortChapters(ids: Iterable<ChapterId>): ChapterId[] {
@@ -63,6 +71,7 @@ export function normalizeProgress(raw: unknown): TripProgress | null {
   return {
     phase,
     completed: sortChapters(completedRaw.filter(isChapterId)),
+    seen: sortSeen((Array.isArray(r.seen) ? r.seen : []).filter((k): k is string => typeof k === 'string')),
     startedAt: isIso(r.startedAt) ? r.startedAt : null,
     finishedAt: isIso(r.finishedAt) ? r.finishedAt : null,
     updatedAt: isIso(r.updatedAt) ? r.updatedAt : new Date(0).toISOString(),
@@ -89,6 +98,7 @@ export function mergeProgress(a: TripProgress, b: TripProgress): TripProgress {
   return {
     phase: completed.length === CHAPTER_IDS.length ? 'finale' : phase,
     completed,
+    seen: sortSeen([...a.seen, ...b.seen]),
     startedAt: earliest(a.startedAt, b.startedAt),
     finishedAt: earliest(a.finishedAt, b.finishedAt),
     updatedAt: latest(a.updatedAt, b.updatedAt),
@@ -99,6 +109,7 @@ export function progressEquals(a: TripProgress, b: TripProgress): boolean {
   return (
     a.phase === b.phase &&
     a.completed.join() === b.completed.join() &&
+    a.seen.join() === b.seen.join() &&
     a.startedAt === b.startedAt &&
     a.finishedAt === b.finishedAt
   );
@@ -128,18 +139,52 @@ export function completeChapter(progress: TripProgress, id: ChapterId, now = new
   };
 }
 
-/** Debug: Fortschritt so setzen, dass Kapitel `index` (0-basiert) das aktuelle ist. */
-export function progressAtChapter(index: number, now = new Date().toISOString()): TripProgress {
-  const clamped = Math.max(0, Math.min(index, CHAPTER_IDS.length));
-  const completed = CHAPTER_IDS.slice(0, clamped);
-  const done = clamped === CHAPTER_IDS.length;
+export function markSeen(progress: TripProgress, key: string, now = new Date().toISOString()): TripProgress {
+  if (progress.seen.includes(key) || !SEEN_PATTERN.test(key)) return progress;
+  return { ...progress, seen: sortSeen([...progress.seen, key]), updatedAt: now };
+}
+
+/** Ein Interlude gilt auch als erledigt, wenn schon ein späteres Kapitel abgeschlossen ist (z. B. am anderen Handy). */
+export function isStepDone(progress: TripProgress, step: StoryStep): boolean {
+  if (step.kind === 'chapter') return progress.completed.includes(step.id);
+  if (progress.seen.includes(seenKey.interlude(step.id))) return true;
+  const at = STORY.findIndex((s) => s.kind === 'interlude' && s.id === step.id);
+  return STORY.slice(at + 1).some((s) => s.kind === 'chapter' && progress.completed.includes(s.id));
+}
+
+/** Index des aktuellen Schritts im Tagesablauf (Interludes + Kapitel). STORY.length = alles erledigt. */
+export function currentStepIndex(progress: TripProgress): number {
+  const idx = STORY.findIndex((step) => !isStepDone(progress, step));
+  return idx === -1 ? STORY.length : idx;
+}
+
+export function currentStep(progress: TripProgress): StoryStep | null {
+  return STORY[currentStepIndex(progress)] ?? null;
+}
+
+/**
+ * Debug/Tests: Fortschritt so setzen, dass STORY[stepIndex] der aktuelle Schritt ist.
+ * stepIndex >= STORY.length → Finale.
+ */
+export function progressAtStep(stepIndex: number, now = new Date().toISOString(), extraSeen: string[] = []): TripProgress {
+  const clamped = Math.max(0, Math.min(stepIndex, STORY.length));
+  const done = STORY.slice(0, clamped);
+  const completed = done.flatMap((s) => (s.kind === 'chapter' ? [s.id] : []));
+  const seen = done.flatMap((s) => (s.kind === 'interlude' ? [seenKey.interlude(s.id)] : []));
+  const finished = clamped === STORY.length;
   return {
-    phase: done ? 'finale' : 'journey',
-    completed: [...completed],
+    phase: finished ? 'finale' : 'journey',
+    completed: sortChapters(completed),
+    seen: sortSeen([...seen, ...extraSeen]),
     startedAt: now,
-    finishedAt: done ? now : null,
+    finishedAt: finished ? now : null,
     updatedAt: now,
   };
+}
+
+/** Index des Schritts, an dem ein Kapitel steht. */
+export function stepIndexOfChapter(id: ChapterId): number {
+  return STORY.findIndex((s) => s.kind === 'chapter' && s.id === id);
 }
 
 export function normalizeResponses(raw: unknown): Responses {

@@ -1,60 +1,65 @@
 /**
- * Zentrale Trip-Konfiguration.
- *
- * Hier stehen ALLE echten Reisedaten. Nichts davon ist in UI-Komponenten hartcodiert.
+ * Zentrale Reise-Konfiguration (Logistik). Persönliches steht in src/config/family.ts.
  *
  * Regeln:
  * - `null` bedeutet „noch nicht bekannt“. Die UI zeigt dann dezent „Биће допуњено“ / „Wird noch ergänzt“
  *   bzw. blendet die Zeile aus. Nichts wird erfunden.
- * - Texte, die übersetzt werden müssen, sind `Localized` ({ sr, de }).
- *   Eigennamen und Adressen sind einfache Strings.
- * - Uhrzeiten im Format "HH:MM" (Wiener Ortszeit).
- * - Links: vollständige https-URLs, z. B. Google-Maps-Link
- *   (https://www.google.com/maps/search/?api=1&query=<Adresse>) oder Apple-Maps-Link.
+ * - Texte, die übersetzt werden müssen, sind `Localized` ({ sr, de }). Eigennamen/Adressen sind Strings.
+ * - Uhrzeiten "HH:MM" (Wiener Ortszeit). Links: vollständige https-URLs.
+ * - Ohne Navigations-Link wird aus Adresse bzw. Name automatisch ein Google-Maps-Link gebaut.
  */
 
 export type Localized = { sr: string; de: string };
 export type LocalizedOrPlain = string | Localized;
 
+export interface Place {
+  name: string;
+  address: string | null;
+  navigationUrl: string | null;
+}
+
+export interface EpilogueLocation {
+  name: string;
+  /** Kurz: was ist das, warum lohnt es sich. */
+  description: Localized;
+  /** Optional: ein Satz Geschichte. */
+  history: Localized | null;
+  /** Optional: Weg/Dauer, z. B. { sr: '10 минута пешке', de: '10 Minuten zu Fuß' }. */
+  walk: Localized | null;
+  address: string | null;
+  navigationUrl: string | null;
+}
+
 export interface TripConfig {
-  /** ISO-Datum des Tages (Wiener Zeit). */
   date: string;
   timeZone: string;
-  family: {
-    mother: Localized;
-    father: Localized;
-    /** Optional: Namen der Kinder für die Signatur, z. B. [{ sr: 'Лазар', de: 'Lazar' }]. Leer = nur „Ваша деца“. */
-    children: Localized[];
-  };
   hotel: {
-    name: string | null;
+    name: string;
+    room: LocalizedOrPlain | null;
+    stay: LocalizedOrPlain | null;
     address: string | null;
     mapsUrl: string | null;
-    /** z. B. Hinweis zum Gym oder Spa (Öffnungszeiten, Stockwerk). */
     gymNotes: LocalizedOrPlain | null;
     spaNotes: LocalizedOrPlain | null;
   };
+  /** Kapitel III: kurzer Weg vom Hotel (Navigation „Покажи пут“). */
+  viennaWalk: {
+    destination: Place;
+    /** Startpunkt der Route; null = aktueller Standort. */
+    origin: string | null;
+    travelMode: 'walking' | 'transit';
+  };
   viennaOpen: {
-    /** Anzeigename des Events. */
     eventName: string;
-    /** TODO bestätigen – z. B. „Wiener Stadthalle“. */
     venue: string | null;
     venueAddress: string | null;
-    /** z. B. { sr: 'Дневна сесија', de: 'Tagessession' } oder ein bestätigtes Match. Spieler erst eintragen, wenn bestätigt. */
     session: LocalizedOrPlain | null;
-    /** Einlass, "HH:MM". */
     entryTime: string | null;
-    /** Beginn, "HH:MM". */
     startTime: string | null;
-    /** Empfohlene Abfahrt vom Hotel, "HH:MM". */
     departureTime: string | null;
     seatInfo: LocalizedOrPlain | null;
-    /** Link zu Online-Tickets / Wallet. */
     ticketUrl: string | null;
-    /**
-     * Optional: Pfad zu einem Ticket-PDF unter /public (z. B. "/t/8f3k2-tickets.pdf").
-     * ACHTUNG: Dateien in /public sind öffentlich abrufbar – kryptischen Dateinamen wählen.
-     */
+    /** Pfad unter /public – ACHTUNG: öffentlich abrufbar, kryptischen Namen wählen. */
     ticketPdf: string | null;
     navigationUrl: string | null;
     notes: LocalizedOrPlain | null;
@@ -62,20 +67,16 @@ export interface TripConfig {
   restaurant: {
     name: string | null;
     address: string | null;
-    /** "HH:MM" */
     reservationTime: string | null;
     reservationName: string | null;
     navigationUrl: string | null;
     notes: LocalizedOrPlain | null;
   };
-  /** Optionale Uhrzeiten pro Kapitel ("HH:MM"), werden dezent im Kapitelkopf gezeigt. */
-  chapterTimes: {
-    morning: string | null;
-    mission: string | null;
-    tennis: string | null;
-    pause: string | null;
-    spa: string | null;
-    dinner: string | null;
+  chapterTimes: Record<'morning' | 'mission' | 'vienna' | 'tennis' | 'spa' | 'dinner', string | null>;
+  epilogue: {
+    /** Ab wann der Epilog erscheint (ISO mit Offset). 28.10. morgens Wiener Zeit (MEZ, +01:00). */
+    availableFrom: string;
+    locations: EpilogueLocation[];
   };
 }
 
@@ -83,40 +84,42 @@ export const trip: TripConfig = {
   date: '2026-10-27',
   timeZone: 'Europe/Vienna',
 
-  family: {
-    mother: { sr: 'Мама', de: 'Mama' },
-    father: { sr: 'Тата', de: 'Papa' },
-    children: [],
+  hotel: {
+    name: 'Renaissance Vienna Schönbrunn Hotel',
+    room: 'King Room',
+    stay: { sr: '26–28. октобар 2026.', de: '26.–28. Oktober 2026' },
+    address: null, // TODO: Adresse aus der Buchungsbestätigung
+    mapsUrl: null,
+    gymNotes: null,
+    spaNotes: { sr: 'Сауна је укључена у ваш боравак.', de: 'Die Sauna ist in eurem Aufenthalt inklusive.' },
   },
 
-  hotel: {
-    name: null, // TODO: Hotelname
-    address: null, // TODO: Hoteladresse
-    mapsUrl: null, // TODO: Maps-Link
-    gymNotes: null,
-    spaNotes: null,
+  viennaWalk: {
+    destination: { name: 'Schloss Schönbrunn', address: 'Schönbrunner Schloßstraße 47, 1130 Wien', navigationUrl: null },
+    origin: 'Renaissance Vienna Schönbrunn Hotel',
+    travelMode: 'walking',
   },
 
   viennaOpen: {
     eventName: 'Vienna Open',
     venue: null, // TODO: Arena bestätigen
     venueAddress: null,
-    session: null, // TODO: Session / Match – nur bestätigte Infos
+    session: { sr: 'Цео дан, више мечева', de: 'Ganzer Tag, mehrere Matches' },
     entryTime: null,
     startTime: null,
     departureTime: null,
-    seatInfo: null, // TODO: z. B. { sr: 'Сектор B · ред 7 · места 12 и 13', de: 'Sektor B · Reihe 7 · Plätze 12 und 13' }
-    ticketUrl: null,
+    seatInfo: null, // TODO
+    ticketUrl: null, // TODO: Tickets sind vorhanden – Link eintragen
     ticketPdf: null,
     navigationUrl: null,
     notes: null,
   },
 
   restaurant: {
-    name: null, // TODO
-    address: null, // TODO
-    reservationTime: null, // TODO "19:30"
-    reservationName: null, // TODO
+    name: null, // TODO: italienisch
+    address: null,
+    reservationTime: null,
+    reservationName: null,
     navigationUrl: null,
     notes: null,
   },
@@ -124,9 +127,15 @@ export const trip: TripConfig = {
   chapterTimes: {
     morning: null,
     mission: null,
+    vienna: null,
     tennis: null,
-    pause: null,
     spa: null,
     dinner: null,
+  },
+
+  epilogue: {
+    availableFrom: '2026-10-28T06:00:00+01:00',
+    // TODO: 2–3 Orte mit wenig Laufen. Nichts erfinden – erst eintragen, wenn ausgewählt.
+    locations: [],
   },
 };

@@ -1,41 +1,66 @@
-import type { ChapterId } from '../config/chapters';
+import type { ChapterId, InterludeId, QuestionId } from '../config/chapters';
+import type { AssetSlot } from '../config/family';
 
 export type Language = 'sr' | 'de';
 export const LANGUAGES: readonly Language[] = ['sr', 'de'];
 export const DEFAULT_LANGUAGE: Language = 'sr';
+
+/** Familien-Leitmotiv. Wird bewusst nie übersetzt und nie erklärt. */
+export const MOTIF = 'Јел’ знате?';
 
 export interface TaskItem {
   title: string;
   detail?: string;
 }
 
+/** Bildquelle eines Story-Frames: ein Familien-Asset oder ein heutiges Foto der Eltern. */
+export type FrameAsset = Exclude<AssetSlot, 'familyVideo' | 'familyVideoPoster' | 'audioDjordje' | 'audioBogdana' | 'audioLazar'> | 'parentsToday';
+
+/** Eine „Seite“ einer Erinnerungssequenz. */
+export interface StoryFrame {
+  lines: string[];
+  small?: string;
+  asset?: FrameAsset;
+  size?: 'xl' | 'lg' | 'md';
+  /** Unterschrift der Kinder statt Text. */
+  signature?: boolean;
+}
+
 export interface ChapterContent {
-  /** Kleiner Text über der Headline. */
   eyebrow: string;
   title: string;
-  /** Erster, etwas größerer Satz. */
-  lead: string;
-  body: string[];
-  tasks: TaskItem[];
-  /** Ruhiger Hinweis (z. B. „nur soweit ihr euch wohlfühlt“). */
-  note?: string;
-  /** Optionale Zusatz-Challenge. */
-  challenge?: string;
-  photo: { title: string; text: string };
-  /** Text nach dem Speichern. */
-  saved: string;
-  /** CTA, wenn kein Foto nötig ist. */
-  completeCta?: string;
-  /** Großer Reveal-Schriftzug (nur Tennis). */
+  subtitle?: string;
+  /** Großer Reveal-Schriftzug (Tennis). */
   reveal?: string;
+  /** Kurze Zeilen der Geschichte (eigener Screen). */
+  story: string[];
+  storyClose?: string;
+  /** Kleine Wien-Geschichten. */
+  facts?: Array<{ title: string; text: string }>;
+  /** Die Regel beim Dinner. */
+  rule?: { intro: string; items: string[]; punchline: string };
+  toast?: string;
+  tasksTitle?: string;
+  tasks: TaskItem[];
+  note?: string;
+  challenge?: string;
+  photo?: { title: string; text: string };
+  saved: string;
+  completeCta?: string;
   pdf: { title: string; text: string };
 }
 
+export interface QuestionContent {
+  title: string;
+  hint?: string;
+  placeholder?: string;
+  options?: Record<string, string>;
+  /** Kurzer Titel fürs Album/PDF. */
+  pdfLabel: string;
+}
+
 export interface Dictionary {
-  meta: {
-    htmlLang: string;
-    documentTitle: string;
-  };
+  meta: { htmlLang: string; documentTitle: string };
   common: {
     dateShort: string;
     dateLong: string;
@@ -45,22 +70,19 @@ export interface Dictionary {
     footer: string;
     tbd: string;
     optional: string;
+    next: string;
     reload: string;
     offline: string;
     syncing: string;
+    and: string;
   };
-  opening: {
-    dedication: string;
-    place: string;
-    tagline: string;
-    cta: string;
-  };
+  opening: { place: string; dedication: string; tagline: string; cta: string; continue: string };
   intro: {
-    greeting: string;
-    lines: string[];
+    before: string[];
+    turn: string;
+    after: string[];
     highlightLead: string;
-    highlight: string;
-    closing: string[];
+    highlight: string[];
     cta: string;
   };
   chapter: {
@@ -73,14 +95,16 @@ export interface Dictionary {
     task: string;
     tasks: string;
     challenge: string;
-    question: string;
+    toast: string;
     locked: string;
     lockedHint: string;
     unlocked: string;
     reviewBack: string;
     reviewing: string;
     timeLabel: (time: string) => string;
+    toChapter: (roman: string) => string;
   };
+  interludes: Record<InterludeId, StoryFrame[]>;
   photo: {
     heading: string;
     capture: string;
@@ -110,31 +134,57 @@ export interface Dictionary {
     openTicket: string;
     openTicketPdf: string;
     navigate: string;
+    showWay: string;
     notes: string;
     restaurant: string;
     address: string;
     reservation: string;
     reservationName: string;
     hotel: string;
+    room: string;
+    stay: string;
     openMaps: string;
     ticketTitle: string;
     restaurantTitle: string;
     hotelTitle: string;
+    routeTitle: string;
+    routeHint: string;
   };
-  questions: {
-    winnerTitle: string;
-    winnerHint: string;
-    winnerPlaceholder: string;
-    momentTitle: string;
-    momentHint: string;
-    momentPlaceholder: string;
-    saved: string;
+  questions: Record<QuestionId, QuestionContent> & {
+    ui: { save: string; edit: string; saved: string; write: string };
   };
+  music: { title: string; hint: string; spotify: string; apple: string; youtube: string };
   chapters: Record<ChapterId, ChapterContent>;
-  final: {
-    lines: string[];
+  messages: { eyebrow: string; dismiss: string };
+  finale: {
+    more: { title: string; cta: string };
+    letter: { salutation: string; opening: string[]; emphasis: string; list: string[]; after: string[]; closing: string };
+    video: { title: string; play: string; transcript: string };
+    voices: { title: string; play: string; pause: string; transcript: string; progress: string };
+    bonusIntro: { title: string; subtitle: string; cta: string };
+    bonus: StoryFrame[];
     signature: string;
-    cta: string;
+    home: {
+      title: string;
+      text: string;
+      empty: string;
+      replay: string;
+      memoryTitle: string;
+      memoryText: string;
+      memoryCta: string;
+      epilogueEyebrow: string;
+      epilogueTitle: string;
+    };
+  };
+  epilogue: {
+    eyebrow: string;
+    title: string;
+    lines: string[];
+    locationsTitle: string;
+    update: string;
+    updateHint: string;
+    farewell: string;
+    back: string;
   };
   memory: {
     steps: string[];
@@ -152,18 +202,14 @@ export interface Dictionary {
   pdf: {
     coverTitle: string;
     coverDate: string;
-    coverDedication: string;
     coverSubline: string;
     letterEyebrow: string;
-    letterSalutation: string;
-    letter: string[];
-    letterSignoff: string;
+    memoryEyebrow: string;
     chapterEyebrow: (roman: string) => string;
     capturedAt: (time: string) => string;
-    predictionTitle: string;
-    momentTitle: string;
-    closing: string[];
-    closingSignature: string;
+    answersEyebrow: string;
+    answersTitle: string;
+    closingSmall: string;
     colophon: string;
     documentTitle: string;
   };
@@ -175,6 +221,7 @@ export interface Dictionary {
     uploadFailed: string;
     backendUnreachable: string;
     storageFull: string;
+    mediaFailed: string;
     generic: string;
     genericTitle: string;
   };

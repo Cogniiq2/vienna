@@ -9,16 +9,21 @@ import {
   type RGB,
 } from 'pdf-lib';
 import { CHAPTER_IDS, type ChapterId, type QuestionId } from '../config/chapters';
+import { family } from '../config/family';
 import { trip } from '../config/trip';
-import type { Dictionary, Language } from '../content';
+import { MOTIF, type Dictionary, type Language } from '../content';
+import { localize } from '../i18n/context';
 import { formatClock, toRoman } from '../lib/format';
 import { cropForFrame } from '../lib/image';
 import { clampLines, sanitizeForFont, wrapText } from './layout';
+import { planMemoryPages, type MemoryAssetSlot, type PagePlan } from './plan';
+
+export type { MemoryAssetSlot } from './plan';
 
 /**
  * Erzeugt das Erinnerungs-PDF komplett im Browser:
- * echtes Buchlayout (200 × 250 mm), eingebettete Schriften mit kyrillischen Glyphen (subsetted),
- * Fotos passend zugeschnitten. Keine Screenshots, kein Browser-Print.
+ * ein kleines Familien-Reisejournal (200 × 250 mm) mit eingebetteten Schriften (Kyrillisch),
+ * Tagesfotos, alten Familienfotos und euren Antworten als große Zitate. Keine Screenshots.
  */
 
 export interface MemoryPhoto {
@@ -31,7 +36,10 @@ export interface MemoryInput {
   lang: Language;
   t: Dictionary;
   photos: Partial<Record<ChapterId, MemoryPhoto>>;
-  responses: Partial<Record<QuestionId, string>>;
+  /** Familienfotos (alte Fotos, Familie heute). Fehlende werden ausgelassen. */
+  assets: Partial<Record<MemoryAssetSlot, Blob>>;
+  /** Antworten in Anzeigeform (Auswahl bereits übersetzt). */
+  answers: Partial<Record<QuestionId, string>>;
   /** Chapters, die abgeschlossen wurden (auch ohne Foto). */
   completed: ChapterId[];
 }
@@ -70,6 +78,7 @@ interface Fonts {
   serif: PDFFont; // Cormorant Garamond Regular
   sans: PDFFont; // Manrope Regular
   sansMedium: PDFFont; // Manrope SemiBold (Eyebrows)
+  hand: PDFFont; // Caveat (kleine handschriftliche Notizen)
 }
 
 const FONT_FILES = {
@@ -77,6 +86,7 @@ const FONT_FILES = {
   serif: '/fonts/pdf/CormorantGaramond_400Regular.ttf',
   sans: '/fonts/pdf/Manrope_400Regular.ttf',
   sansMedium: '/fonts/pdf/Manrope_600SemiBold.ttf',
+  hand: '/fonts/pdf/Caveat_400Regular.ttf',
 } as const;
 
 const fontCache = new Map<string, Promise<ArrayBuffer>>();
@@ -212,24 +222,54 @@ function folio(ts: Typesetter, fonts: Fonts, t: Dictionary, pageNumber: number) 
   ts.line(String(pageNumber), PAGE_W - MARGIN_X, y, style, 'right');
 }
 
-async function embedPhoto(
+async function embedImage(
   doc: PDFDocument,
-  photo: MemoryPhoto,
+  blob: Blob,
   widthPt: number,
   heightPt: number,
+  archival = false,
 ): Promise<PDFImage | null> {
   try {
-    const bytes = await cropForFrame(photo.blob, widthPt / heightPt, Math.round(Math.max(widthPt, heightPt) * PX_PER_PT));
+    const { bytes } = await cropForFrame(blob, widthPt / heightPt, Math.round(Math.max(widthPt, heightPt) * PX_PER_PT), {
+      archival,
+    });
     return await doc.embedJpg(bytes);
   } catch {
     return null;
   }
 }
 
+/** Altes Foto mit Passepartout: ganzes Motiv (nicht beschnitten), weißer Rand, weicher Schatten. */
+async function embedArchival(
+  doc: PDFDocument,
+  blob: Blob,
+  maxW: number,
+  maxH: number,
+): Promise<{ img: PDFImage; w: number; h: number } | null> {
+  try {
+    const { bytes, width, height } = await cropForFrame(blob, 1, Math.round(Math.max(maxW, maxH) * PX_PER_PT), {
+      archival: true,
+      fit: 'contain',
+    });
+    const scale = Math.min(maxW / width, maxH / height);
+    return { img: await doc.embedJpg(bytes), w: width * scale, h: height * scale };
+  } catch {
+    return null;
+  }
+}
+
+function drawMatted(page: PDFPage, image: PDFImage, x: number, top: number, w: number, h: number) {
+  const mat = 9;
+  page.drawRectangle({ x: x - mat + 2, y: PAGE_H - top - h - mat - 3, width: w + mat * 2, height: h + mat * 2, color: hex('#e4ddd0') });
+  page.drawRectangle({ x: x - mat, y: PAGE_H - top - h - mat, width: w + mat * 2, height: h + mat * 2, color: hex('#fdfcf9') });
+  page.drawImage(image, { x, y: PAGE_H - top - h, width: w, height: h });
+}
+
 function drawPhoto(page: PDFPage, image: PDFImage, x: number, top: number, w: number, h: number) {
   page.drawRectangle({ x, y: PAGE_H - top - h, width: w, height: h, color: C.frame });
   page.drawImage(image, { x, y: PAGE_H - top - h, width: w, height: h });
 }
+
 
 // --- Hauptfunktion -------------------------------------------------------------
 
@@ -238,19 +278,22 @@ export async function generateMemoryPdf(input: MemoryInput): Promise<Blob> {
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
 
-  const [display, serif, sans, sansMedium] = await Promise.all([
+  const [display, serif, sans, sansMedium, hand] = await Promise.all([
     loadFont(FONT_FILES.display),
     loadFont(FONT_FILES.serif),
     loadFont(FONT_FILES.sans),
     loadFont(FONT_FILES.sansMedium),
+    loadFont(FONT_FILES.hand),
   ]);
   // Kein Subsetting: pdf-lib/fontkit beschädigt beim Subsetten zusammengesetzte Glyphen (Cormorant).
-  // Die Schriften sind bereits auf Latein + Kyrillisch reduziert (~480 KB gesamt).
+  // Die Schriften sind bereits auf Latein + Kyrillisch reduziert.
   const fonts: Fonts = {
     display: await doc.embedFont(display, { subset: false }),
     serif: await doc.embedFont(serif, { subset: false }),
     sans: await doc.embedFont(sans, { subset: false }),
     sansMedium: await doc.embedFont(sansMedium, { subset: false }),
+    // Caveat: kontextuelle Varianten (calt) erzeugen in pdf-lib fehlende Glyphen → abschalten.
+    hand: await doc.embedFont(hand, { subset: false, features: { calt: false, liga: false, rclt: false } }),
   };
 
   const S = {
@@ -258,183 +301,238 @@ export async function generateMemoryPdf(input: MemoryInput): Promise<Blob> {
     eyebrowAccent: { font: fonts.sansMedium, size: 7.2, color: hex('#7f6643'), tracking: 1.7 } satisfies TextStyle,
     title: { font: fonts.display, size: 34, color: C.ink, lineHeight: 1.05 } satisfies TextStyle,
     body: { font: fonts.serif, size: 13.5, color: C.ink2, lineHeight: 1.42 } satisfies TextStyle,
-    quote: { font: fonts.serif, size: 15, color: C.ink, lineHeight: 1.38 } satisfies TextStyle,
+    letter: { font: fonts.serif, size: 14, color: C.ink2, lineHeight: 1.5 } satisfies TextStyle,
+    quote: { font: fonts.display, size: 22, color: C.ink, lineHeight: 1.25 } satisfies TextStyle,
+    small: { font: fonts.serif, size: 12.5, color: C.ink2, lineHeight: 1.4 } satisfies TextStyle,
     meta: { font: fonts.sans, size: 7.5, color: C.muted, tracking: 0.6 } satisfies TextStyle,
+    hand: { font: fonts.hand, size: 15, color: hex('#5f5547'), lineHeight: 1.25 } satisfies TextStyle,
   };
 
-  const children = trip.family.children.map((c) => c[lang]).filter(Boolean).join(' · ');
+  const parentsNames = `${family.parents.mother.name[lang]} & ${family.parents.father.name[lang]}`;
+  const childrenNames = family.children.map((c) => c.name[lang]).join(' · ');
+  const plan = planMemoryPages({
+    photos: new Set(Object.keys(input.photos) as ChapterId[]),
+    assets: new Set(Object.keys(input.assets) as MemoryAssetSlot[]),
+    answers: input.answers,
+    completed: input.completed,
+  });
+
   let pageNo = 0;
-
-  // ---------------------------------------------------------------------------
-  // 1. Cover
-  // ---------------------------------------------------------------------------
-  {
-    const { page, ts } = newPage(doc);
-    pageNo++;
-    const coverPhoto = CHAPTER_IDS.map((id) => input.photos[id]).find(Boolean);
-    const photoH = 392;
-    let image: PDFImage | null = null;
-    if (coverPhoto) image = await embedPhoto(doc, coverPhoto, CONTENT_W, photoH);
-
-    if (image) {
-      drawPhoto(page, image, MARGIN_X, MARGIN_TOP, CONTENT_W, photoH);
-      let top = MARGIN_TOP + photoH + 40;
-      ts.line(t.pdf.coverDedication.toUpperCase(), MARGIN_X, PAGE_H - top - 7, S.eyebrowAccent);
-      top += 22;
-      top = ts.paragraph(t.pdf.coverTitle, top, { font: fonts.display, size: 66, color: C.ink, lineHeight: 1 });
-      top += 6;
-      top = ts.paragraph(t.pdf.coverDate, top, { font: fonts.serif, size: 17, color: C.ink2 });
-      rule(page, MARGIN_X, top + 18, 34);
-      ts.paragraph(t.pdf.coverSubline, top + 30, { font: fonts.sans, size: 9, color: C.muted, lineHeight: 1.5 });
-    } else {
-      const cx = PAGE_W / 2;
-      let top = PAGE_H * 0.34;
-      ts.line(t.pdf.coverDedication.toUpperCase(), cx, PAGE_H - top, S.eyebrowAccent, 'center');
-      top += 26;
-      top = ts.paragraph(t.pdf.coverTitle, top, { font: fonts.display, size: 92, color: C.ink, lineHeight: 1 }, { align: 'center' });
-      top += 10;
-      top = ts.paragraph(t.pdf.coverDate, top, { font: fonts.serif, size: 19, color: C.ink2 }, { align: 'center' });
-      rule(page, cx - 17, top + 22, 34);
-      ts.paragraph(t.pdf.coverSubline, top + 36, { font: fonts.sans, size: 9.5, color: C.muted }, { align: 'center' });
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // 2. Brief der Kinder
-  // ---------------------------------------------------------------------------
-  {
-    const { page, ts } = newPage(doc);
-    pageNo++;
-    const x = MARGIN_X + 26;
-    const width = CONTENT_W - 52;
-    let top = 150;
-    ts.line(t.pdf.letterEyebrow.toUpperCase(), x, PAGE_H - top, S.eyebrowAccent);
-    rule(page, x, top + 18, 34);
-    top += 52;
-    top = ts.paragraph(t.pdf.letterSalutation, top, { font: fonts.display, size: 24, color: C.ink, lineHeight: 1.2 }, { x, width });
-    top += 18;
-    for (const p of t.pdf.letter) {
-      top = ts.paragraph(p, top, { font: fonts.serif, size: 14.5, color: C.ink2, lineHeight: 1.5 }, { x, width });
-      top += 12;
-    }
-    top += 14;
-    top = ts.paragraph(t.pdf.letterSignoff, top, { font: fonts.display, size: 20, color: C.ink }, { x, width });
-    if (children) top = ts.paragraph(children, top + 6, S.meta, { x, width });
-    heart(page, x + 6, top + 18);
-    folio(ts, fonts, t, pageNo);
-  }
-
-  // ---------------------------------------------------------------------------
-  // 3. Kapitel
-  // ---------------------------------------------------------------------------
   let photoSide = 0;
-  for (const [index, id] of CHAPTER_IDS.entries()) {
-    const photo = input.photos[id];
-    if (!photo && !input.completed.includes(id)) continue;
-    const { page, ts } = newPage(doc);
-    pageNo++;
-    const content = t.chapters[id];
-    const eyebrow = `${t.pdf.chapterEyebrow(toRoman(index + 1))} · ${content.eyebrow}`.toUpperCase();
-    const clock = photo ? formatClock(photo.capturedAt, trip.timeZone) : null;
 
-    // Antworten
-    const answers: Array<{ label: string; lines: string[] }> = [];
-    if (id === 'tennis') {
-      const mother = input.responses['tennis.winner.mother']?.trim();
-      const father = input.responses['tennis.winner.father']?.trim();
-      const rows = [
-        mother ? `${trip.family.mother[lang]} — ${mother}` : null,
-        father ? `${trip.family.father[lang]} — ${father}` : null,
-      ].filter((r): r is string => Boolean(r));
-      if (rows.length) answers.push({ label: t.pdf.predictionTitle, lines: rows });
-    }
-    if (id === 'dinner') {
-      const moment = input.responses['dinner.moment']?.trim();
-      if (moment) answers.push({ label: t.pdf.momentTitle, lines: [`„${moment}“`] });
-    }
-
-    // Höhe des Textblocks berechnen, damit das Foto den Rest füllt.
-    const titleH = ts.paragraphHeight(content.pdf.title, S.title, CONTENT_W, 2);
-    const bodyH = ts.paragraphHeight(content.pdf.text, S.body, CONTENT_W, 4);
-    let answersH = 0;
-    for (const a of answers) {
-      answersH += 26;
-      for (const l of a.lines) answersH += ts.paragraphHeight(l, S.quote, CONTENT_W, 7) + 4;
-    }
-    const textH = 12 + 20 + titleH + 12 + bodyH + (answers.length ? 18 + answersH : 0);
-
-    const drawText = (startTop: number) => {
-      let top = startTop;
-      ts.line(eyebrow, MARGIN_X, PAGE_H - top - 7, S.eyebrowAccent);
-      if (clock) ts.line(t.pdf.capturedAt(clock), PAGE_W - MARGIN_X, PAGE_H - top - 7, S.meta, 'right');
-      top += 22;
-      top = ts.paragraph(content.pdf.title, top, S.title, { maxLines: 2 });
-      top += 12;
-      top = ts.paragraph(content.pdf.text, top, S.body, { maxLines: 4 });
-      if (answers.length) {
-        top += 18;
-        for (const a of answers) {
-          rule(page, MARGIN_X, top, 24);
-          top += 12;
-          ts.line(a.label.toUpperCase(), MARGIN_X, PAGE_H - top - 7, S.eyebrow);
-          top += 14;
-          for (const l of a.lines) top = ts.paragraph(l, top, S.quote, { maxLines: 7 }) + 4;
-        }
-      }
-      return top;
-    };
-
-    const available = PAGE_H - MARGIN_TOP - MARGIN_BOTTOM;
-    const image = photo ? await embedPhotoForPage(doc, photo, available - textH - 30) : null;
-
-    if (image) {
-      const { img, h } = image;
-      const photoFirst = photoSide++ % 2 === 0;
-      if (photoFirst) {
-        drawPhoto(page, img, MARGIN_X, MARGIN_TOP, CONTENT_W, h);
-        drawText(MARGIN_TOP + h + 30);
+  const renderers: { [K in PagePlan['kind']]: (p: Extract<PagePlan, { kind: K }>) => Promise<void> | void } = {
+    // -------------------------------------------------------------------------
+    cover: async ({ photo }) => {
+      const { page, ts } = newPage(doc);
+      pageNo++;
+      const photoH = 392;
+      const source = photo ? input.photos[photo] : undefined;
+      const image = source ? await embedImage(doc, source.blob, CONTENT_W, photoH) : null;
+      if (image) {
+        drawPhoto(page, image, MARGIN_X, MARGIN_TOP, CONTENT_W, photoH);
+        let top = MARGIN_TOP + photoH + 34;
+        top = ts.paragraph(t.pdf.coverTitle, top, { font: fonts.display, size: 66, color: C.ink, lineHeight: 1 });
+        top += 4;
+        top = ts.paragraph(t.pdf.coverDate, top, { font: fonts.serif, size: 17, color: C.ink2 });
+        rule(page, MARGIN_X, top + 16, 34);
+        ts.paragraph(parentsNames, top + 28, { ...S.hand, size: 20 });
       } else {
-        const end = drawText(MARGIN_TOP + 6);
-        drawPhoto(page, img, MARGIN_X, Math.max(end + 24, PAGE_H - MARGIN_BOTTOM - h), CONTENT_W, h);
+        const cx = PAGE_W / 2;
+        let top = PAGE_H * 0.32;
+        top = ts.paragraph(t.pdf.coverTitle, top, { font: fonts.display, size: 96, color: C.ink, lineHeight: 1 }, { align: 'center' });
+        top += 10;
+        top = ts.paragraph(t.pdf.coverDate, top, { font: fonts.serif, size: 19, color: C.ink2 }, { align: 'center' });
+        rule(page, cx - 17, top + 22, 34);
+        top = ts.paragraph(parentsNames, top + 38, { ...S.hand, size: 24 }, { align: 'center' });
+        ts.paragraph(t.pdf.coverSubline, top + 14, { font: fonts.sans, size: 9.5, color: C.muted }, { align: 'center' });
       }
-    } else {
-      // Typografische Seite (Kapitel ohne Foto)
-      const startTop = MARGIN_TOP + Math.max(60, (available - textH) / 2.4);
-      rule(page, MARGIN_X, startTop - 28, 34);
-      drawText(startTop);
-    }
-    folio(ts, fonts, t, pageNo);
-  }
+    },
 
-  // ---------------------------------------------------------------------------
-  // 4. Abschluss
-  // ---------------------------------------------------------------------------
-  {
-    const { page, ts } = newPage(doc);
-    pageNo++;
-    const cx = PAGE_W / 2;
-    const width = CONTENT_W - 60;
-    const x = MARGIN_X + 30;
-    const style: TextStyle = { font: fonts.display, size: 23, color: C.ink, lineHeight: 1.25 };
-    const blockH =
-      t.pdf.closing.reduce((sum, l) => sum + ts.paragraphHeight(l, style, width) + 18, 0) + 80;
-    let top = Math.max(120, (PAGE_H - blockH) / 2 - 20);
-    rule(page, cx - 17, top - 30, 34);
-    for (const line of t.pdf.closing) {
-      top = ts.paragraph(line, top, style, { x, width, align: 'center' }) + 18;
+    // -------------------------------------------------------------------------
+    letter: () => {
+      const { page, ts } = newPage(doc);
+      pageNo++;
+      const L = t.finale.letter;
+      const x = MARGIN_X + 22;
+      const width = CONTENT_W - 44;
+      let top = 96;
+      ts.line(t.pdf.letterEyebrow.toUpperCase(), x, PAGE_H - top, S.eyebrowAccent);
+      rule(page, x, top + 16, 34);
+      top += 44;
+      top = ts.paragraph(L.salutation, top, { font: fonts.display, size: 24, color: C.ink, lineHeight: 1.2 }, { x, width });
+      top += 12;
+      for (const p of L.opening) top = ts.paragraph(p, top, S.letter, { x, width }) + 8;
+      top = ts.paragraph(L.emphasis, top + 2, { font: fonts.display, size: 22, color: C.ink }, { x, width }) + 10;
+      top = ts.paragraph(L.list.join('  ·  '), top, { ...S.letter, color: C.muted, size: 13 }, { x, width }) + 12;
+      for (const p of L.after) top = ts.paragraph(p, top, S.letter, { x, width }) + 8;
+      top = ts.paragraph(L.closing, top + 4, { font: fonts.display, size: 22, color: C.ink }, { x, width });
+      top = ts.paragraph(t.pdf.closingSmall, top + 20, { ...S.hand, size: 20 }, { x, width });
+      ts.paragraph(childrenNames, top + 2, { ...S.hand, size: 15 }, { x, width });
+      folio(ts, fonts, t, pageNo);
+    },
+
+    // -------------------------------------------------------------------------
+    memory: async ({ slot }) => {
+      const blob = input.assets[slot];
+      if (!blob) return;
+      const frames = slot === 'gradskiKlub' ? t.interludes.gradskiKlub : slot === 'wedding' ? t.interludes.wedding : t.interludes.family;
+      const text = frames.flatMap((f) => f.lines).join(' ');
+      const small = frames.map((f) => f.small).find(Boolean) ?? null;
+      const archival = await embedArchival(doc, blob, CONTENT_W - 40, 380);
+      if (!archival) return;
+      const { page, ts } = newPage(doc);
+      pageNo++;
+      ts.line(t.pdf.memoryEyebrow.toUpperCase(), MARGIN_X, PAGE_H - MARGIN_TOP - 7, S.eyebrowAccent);
+      const x = (PAGE_W - archival.w) / 2;
+      const photoTop = MARGIN_TOP + 40;
+      drawMatted(page, archival.img, x, photoTop, archival.w, archival.h);
+      let top = photoTop + archival.h + 22;
+      const meta = family.memoryAssets[slot];
+      const caption = [meta.caption ? localize(meta.caption, lang) : null, meta.location, meta.year].filter(Boolean).join(' · ');
+      if (caption) top = ts.paragraph(caption, top, { ...S.hand, size: 14 }, { align: 'center' }) + 10;
+      top = ts.paragraph(text, top + 10, { font: fonts.display, size: 24, color: C.ink, lineHeight: 1.22 }, { align: 'center', x: MARGIN_X + 20, width: CONTENT_W - 40 });
+      if (small) ts.paragraph(small, top + 10, { ...S.small, color: C.muted }, { align: 'center', x: MARGIN_X + 20, width: CONTENT_W - 40 });
+      folio(ts, fonts, t, pageNo);
+    },
+
+    // -------------------------------------------------------------------------
+    story: () => {
+      const { page, ts } = newPage(doc);
+      pageNo++;
+      const lines = t.interludes.work.map((f) => f.lines.join(' '));
+      const style: TextStyle = { font: fonts.display, size: 20, color: C.ink, lineHeight: 1.28 };
+      const x = MARGIN_X + 24;
+      const width = CONTENT_W - 48;
+      const blockH = lines.reduce((sum, l) => sum + ts.paragraphHeight(l, style, width) + 16, 0);
+      let top = Math.max(MARGIN_TOP + 40, (PAGE_H - blockH) / 2 - 10);
+      rule(page, x, top - 26, 34);
+      lines.forEach((line, i) => {
+        const last = i === lines.length - 1;
+        top = ts.paragraph(line, top, last ? { ...style, size: 23 } : style, { x, width }) + 16;
+      });
+      folio(ts, fonts, t, pageNo);
+    },
+
+    // -------------------------------------------------------------------------
+    chapter: async ({ id }) => {
+      const index = CHAPTER_IDS.indexOf(id);
+      const photo = input.photos[id];
+      const content = t.chapters[id];
+      const { page, ts } = newPage(doc);
+      pageNo++;
+      const eyebrow = `${t.pdf.chapterEyebrow(toRoman(index + 1))} · ${content.eyebrow}`.toUpperCase();
+      const clock = photo ? formatClock(photo.capturedAt, trip.timeZone) : null;
+
+      // Kleine Antworten, die zu diesem Kapitel gehören (große Zitate kommen später).
+      const notes = chapterNotes(id, input.answers, t);
+
+      const titleH = ts.paragraphHeight(content.pdf.title, S.title, CONTENT_W, 2);
+      const bodyH = ts.paragraphHeight(content.pdf.text, S.body, CONTENT_W, 4);
+      const notesH = notes.reduce((sum, n) => sum + 16 + ts.paragraphHeight(n.text, S.hand, CONTENT_W, 2) + 6, 0);
+      const textH = 22 + titleH + 12 + bodyH + (notes.length ? 16 + notesH : 0);
+
+      const drawText = (startTop: number) => {
+        let top = startTop;
+        ts.line(eyebrow, MARGIN_X, PAGE_H - top - 7, S.eyebrowAccent);
+        if (clock) ts.line(t.pdf.capturedAt(clock), PAGE_W - MARGIN_X, PAGE_H - top - 7, S.meta, 'right');
+        top += 22;
+        top = ts.paragraph(content.pdf.title, top, S.title, { maxLines: 2 });
+        top += 12;
+        top = ts.paragraph(content.pdf.text, top, S.body, { maxLines: 4 });
+        if (notes.length) {
+          top += 16;
+          for (const n of notes) {
+            ts.line(n.label.toUpperCase(), MARGIN_X, PAGE_H - top - 7, S.eyebrow);
+            top += 14;
+            top = ts.paragraph(n.text, top, S.hand, { maxLines: 2 }) + 6;
+          }
+        }
+        return top;
+      };
+
+      const available = PAGE_H - MARGIN_TOP - MARGIN_BOTTOM;
+      const h = Math.max(230, Math.min(430, available - textH - 30));
+      const image = photo ? await embedImage(doc, photo.blob, CONTENT_W, h) : null;
+      if (image) {
+        if (photoSide++ % 2 === 0) {
+          drawPhoto(page, image, MARGIN_X, MARGIN_TOP, CONTENT_W, h);
+          drawText(MARGIN_TOP + h + 30);
+        } else {
+          const end = drawText(MARGIN_TOP + 6);
+          drawPhoto(page, image, MARGIN_X, Math.max(end + 24, PAGE_H - MARGIN_BOTTOM - h), CONTENT_W, h);
+        }
+      } else {
+        const startTop = MARGIN_TOP + Math.max(60, (available - textH) / 2.4);
+        rule(page, MARGIN_X, startTop - 28, 34);
+        drawText(startTop);
+      }
+      folio(ts, fonts, t, pageNo);
+    },
+
+    // -------------------------------------------------------------------------
+    answers: ({ questions }) => {
+      const { page, ts } = newPage(doc);
+      pageNo++;
+      let top = MARGIN_TOP + 20;
+      ts.line(t.pdf.answersEyebrow.toUpperCase(), MARGIN_X, PAGE_H - top - 7, S.eyebrowAccent);
+      top += 22;
+      top = ts.paragraph(t.pdf.answersTitle, top, S.title) + 30;
+      for (const q of questions) {
+        const answer = input.answers[q];
+        if (!answer) continue;
+        rule(page, MARGIN_X, top, 24);
+        top += 14;
+        ts.line(t.questions[q].pdfLabel.toUpperCase(), MARGIN_X, PAGE_H - top - 7, S.eyebrow);
+        top += 18;
+        top = ts.paragraph(`„${answer}“`, top, S.quote, { maxLines: 7 }) + 30;
+      }
+      folio(ts, fonts, t, pageNo);
+    },
+
+    // -------------------------------------------------------------------------
+    family: async () => {
+      const blob = input.assets.familyCurrent;
+      if (!blob) return;
+      const image = await embedArchival(doc, blob, CONTENT_W, 400);
+      if (!image) return;
+      const { page, ts } = newPage(doc);
+      pageNo++;
+      const top = MARGIN_TOP + 50;
+      drawMatted(page, image.img, (PAGE_W - image.w) / 2, top, image.w, image.h);
+      const thanks = t.finale.bonus.find((f) => f.asset === 'familyCurrent')?.lines.join(' ') ?? '';
+      ts.paragraph(thanks, top + image.h + 40, { font: fonts.display, size: 26, color: C.ink }, { align: 'center' });
+      folio(ts, fonts, t, pageNo);
+    },
+
+    // -------------------------------------------------------------------------
+    closing: () => {
+      const { page, ts } = newPage(doc);
+      pageNo++;
+      const cx = PAGE_W / 2;
+      let top = PAGE_H * 0.4;
+      top = ts.paragraph(MOTIF, top, { font: fonts.display, size: 46, color: C.ink, lineHeight: 1.1 }, { align: 'center' });
+      rule(page, cx - 17, top + 30, 34);
+      top = ts.paragraph(t.pdf.closingSmall, top + 52, { ...S.hand, size: 22 }, { align: 'center' });
+      top = ts.paragraph(childrenNames, top + 4, { ...S.hand, size: 16 }, { align: 'center' });
+      heart(page, cx, top + 22, 12);
+      ts.line(t.pdf.colophon.toUpperCase(), cx, MARGIN_BOTTOM / 2 - 2, { ...S.meta, size: 6.8, tracking: 1.1 }, 'center');
+    },
+  };
+
+  for (const p of plan) {
+    // Eine fehlerhafte Seite (z. B. defektes Foto) darf nie das ganze Album verhindern.
+    try {
+      await (renderers[p.kind] as (page: PagePlan) => Promise<void> | void)(p);
+    } catch {
+      /* Seite überspringen */
     }
-    top += 16;
-    top = ts.paragraph(t.pdf.closingSignature, top, { font: fonts.serif, size: 15, color: C.ink2 }, { x, width, align: 'center' });
-    if (children) top = ts.paragraph(children, top + 6, S.meta, { x, width, align: 'center' });
-    heart(page, cx, top + 20);
-    ts.line(t.pdf.colophon.toUpperCase(), cx, MARGIN_BOTTOM / 2 - 2, { ...S.meta, size: 6.8, tracking: 1.1 }, 'center');
   }
 
   doc.setTitle(t.pdf.documentTitle);
-  doc.setAuthor(t.pdf.closingSignature);
+  doc.setAuthor(childrenNames);
   doc.setSubject(t.pdf.coverSubline);
-  doc.setCreator(t.pdf.coverDedication);
-  doc.setProducer(t.pdf.coverDedication);
+  doc.setCreator(t.pdf.closingSmall);
+  doc.setProducer(t.pdf.closingSmall);
   doc.setLanguage(t.meta.htmlLang);
   doc.setCreationDate(new Date());
 
@@ -442,12 +540,13 @@ export async function generateMemoryPdf(input: MemoryInput): Promise<Blob> {
   return new Blob([bytes as BlobPart], { type: 'application/pdf' });
 }
 
-async function embedPhotoForPage(
-  doc: PDFDocument,
-  photo: MemoryPhoto,
-  maxHeight: number,
-): Promise<{ img: PDFImage; h: number } | null> {
-  const h = Math.max(230, Math.min(430, maxHeight));
-  const img = await embedPhoto(doc, photo, CONTENT_W, h);
-  return img ? { img, h } : null;
+/** Kleine, persönliche Notizen auf den Kapitelseiten. */
+function chapterNotes(id: ChapterId, answers: Partial<Record<QuestionId, string>>, t: Dictionary): Array<{ label: string; text: string }> {
+  const byChapter: Partial<Record<ChapterId, QuestionId[]>> = {
+    morning: ['morning.firstAwake', 'morning.noWork'],
+    tennis: ['tennis.mother.favorite', 'tennis.father.food'],
+  };
+  return (byChapter[id] ?? [])
+    .map((q) => ({ label: t.questions[q].pdfLabel, text: answers[q]?.trim() ?? '' }))
+    .filter((n) => n.text);
 }

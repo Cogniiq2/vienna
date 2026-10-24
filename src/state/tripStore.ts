@@ -1,11 +1,13 @@
 import { CHAPTER_IDS, type ChapterId, type QuestionId } from '../config/chapters';
+import { family, type AssetSlot } from '../config/family';
 import type { Language } from '../content';
-import { BackendError, type RemoteSnapshot, type TripBackend } from '../lib/backend';
+import { BackendError, type LiveMessage, type RemoteAsset, type RemoteSnapshot, type TripBackend } from '../lib/backend';
 import { photoStore, toMeta, type PhotoMeta, type StoredPhoto } from '../lib/photoStore';
 import {
   advancePhase,
   completeChapter as completeChapterPure,
   initialProgress,
+  markSeen as markSeenPure,
   mergeProgress,
   mergeResponses,
   normalizeProgress,
@@ -39,6 +41,10 @@ export interface TripState {
   connection: Connection;
   /** Es gibt lokale Änderungen, die noch nicht am Server sind. */
   pending: boolean;
+  /** Nachrichten der Kinder (aus dem Admin-Dashboard), älteste zuerst. */
+  messages: LiveMessage[];
+  /** Im Dashboard hochgeladene Familien-Assets. */
+  assets: Partial<Record<AssetSlot, RemoteAsset>>;
 }
 
 interface LocalSnapshot {
@@ -46,9 +52,21 @@ interface LocalSnapshot {
   progressDirty: boolean;
   responses: Responses;
   dirtyResponses: QuestionId[];
+  /** Lokal als gelesen markierte Nachrichten (überlebt Offline-Phasen). */
+  readMessages: string[];
+  pendingReads: string[];
 }
 
 const RETRY_MS = 15_000;
+/** Wie oft der Server nach Neuigkeiten gefragt wird (Nachrichten, zweites Handy). */
+const POLL_MS = 30_000;
+
+/** Kurzes, nicht identifizierendes Gerätelabel fürs Dashboard, z. B. "iPhone · Safari". */
+export function deviceLabel(ua: string = typeof navigator === 'undefined' ? '' : navigator.userAgent): string {
+  const device = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Gerät';
+  const browser = /CriOS|Chrome/.test(ua) ? 'Chrome' : /FxiOS|Firefox/.test(ua) ? 'Firefox' : /Safari/.test(ua) ? 'Safari' : 'Browser';
+  return `${device} · ${browser}`;
+}
 const CONNECT_WAIT_MS = 4_000;
 
 /**
@@ -68,6 +86,8 @@ export class TripStore {
   private syncing: Promise<void> | null = null;
   private syncAgain = false;
   private retryTimer: ReturnType<typeof setInterval> | null = null;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private debugAssets = new Map<AssetSlot, string>();
   private connected = false;
   private disposed = false;
   private language: Language = 'sr';
@@ -86,6 +106,8 @@ export class TripStore {
       photos: {},
       connection: backend.mode === 'local' ? 'local' : 'connecting',
       pending: this.local.progressDirty || this.local.dirtyResponses.length > 0,
+      messages: [],
+      assets: {},
     };
   }
 
@@ -129,6 +151,11 @@ export class TripStore {
 
     window.addEventListener('online', this.handleWake);
     document.addEventListener('visibilitychange', this.handleVisibility);
+    if (this.backend.mode === 'supabase' && !this.pollTimer) {
+      this.pollTimer = setInterval(() => {
+        if (document.visibilityState === 'visible' && navigator.onLine !== false) void this.refresh();
+      }, POLL_MS);
+    }
     await connecting;
   }
 
@@ -137,6 +164,8 @@ export class TripStore {
     window.removeEventListener('online', this.handleWake);
     document.removeEventListener('visibilitychange', this.handleVisibility);
     this.stopRetry();
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = null;
   }
 
   setLanguage(language: Language): void {
@@ -145,9 +174,27 @@ export class TripStore {
   }
 
   private handleWake = () => {
-    if (this.connected) void this.sync();
+    if (this.connected) void this.refresh();
     else void this.connect();
   };
+
+  /** Neuigkeiten vom Server holen (Nachrichten, Fortschritt vom anderen Handy) und ausstehendes senden. */
+  async refresh(): Promise<void> {
+    if (this.backend.mode === 'local') return;
+    if (!this.connected) return this.connect();
+    try {
+      const snapshot = await this.backend.connect(this.tripKey, deviceLabel());
+      if (snapshot) await this.applySnapshot(snapshot);
+      if (this.state.connection !== 'online') this.setState({ connection: 'online' });
+    } catch (error) {
+      if (error instanceof BackendError && error.code === 'invalid-token') {
+        this.setState({ status: 'invalid' });
+        return;
+      }
+      this.setState({ connection: 'unreachable' });
+    }
+    await this.sync();
+  }
 
   private handleVisibility = () => {
     if (document.visibilityState === 'visible') this.handleWake();
@@ -166,7 +213,7 @@ export class TripStore {
   private async runConnect(): Promise<void> {
     this.setState({ connection: 'connecting' });
     try {
-      const snapshot = await this.backend.connect(this.tripKey);
+      const snapshot = await this.backend.connect(this.tripKey, deviceLabel());
       if (snapshot) await this.applySnapshot(snapshot);
       this.connected = true;
       this.setState({ connection: 'online' });
@@ -192,8 +239,10 @@ export class TripStore {
       return localEntry && (!remoteEntry || Date.parse(localEntry.updatedAt) > Date.parse(remoteEntry.updatedAt));
     });
 
-    this.local = { progress: merged, progressDirty, responses, dirtyResponses };
+    this.local = { ...this.local, progress: merged, progressDirty, responses, dirtyResponses };
     this.writeLocal();
+    const read = new Set(this.local.readMessages);
+    const messages = remote.messages.map((m) => (read.has(m.id) && !m.readAt ? { ...m, readAt: new Date().toISOString() } : m));
 
     const photos = { ...this.state.photos };
     for (const chapterId of CHAPTER_IDS) {
@@ -222,6 +271,8 @@ export class TripStore {
       progress: merged,
       responses,
       photos,
+      messages,
+      assets: remote.assets,
       pending: progressDirty || dirtyResponses.length > 0 || this.hasPendingPhotos(photos),
     });
   }
@@ -236,6 +287,58 @@ export class TripStore {
 
   completeChapter(chapterId: ChapterId): void {
     this.updateProgress(completeChapterPure(this.state.progress, chapterId));
+  }
+
+  /** Interlude / Finale-Station als gesehen vermerken. */
+  markSeen(key: string): void {
+    this.updateProgress(markSeenPure(this.state.progress, key));
+  }
+
+  markMessageRead(id: string): void {
+    const now = new Date().toISOString();
+    this.local = {
+      ...this.local,
+      readMessages: [...new Set([...this.local.readMessages, id])],
+      pendingReads: this.backend.mode === 'supabase' ? [...new Set([...this.local.pendingReads, id])] : [],
+    };
+    this.writeLocal();
+    this.setState({ messages: this.state.messages.map((m) => (m.id === id ? { ...m, readAt: m.readAt ?? now } : m)) });
+    void this.sync();
+  }
+
+  /**
+   * Anzeigbare URL eines Familien-Assets oder null, wenn keines vorhanden ist.
+   * Reihenfolge: Debug-Simulation → im Dashboard hochgeladen (signiert, privat) → `src` aus family.ts.
+   */
+  async getAssetUrl(slot: AssetSlot): Promise<string | null> {
+    const debug = this.debugAssets.get(slot);
+    if (debug) return debug;
+    const remote = this.state.assets[slot];
+    if (remote && this.backend.mode === 'supabase') {
+      try {
+        return await this.backend.assetUrl(remote.path);
+      } catch {
+        /* Fallback auf src */
+      }
+    }
+    return configuredAssetSrc(slot);
+  }
+
+  /** Gibt es (vermutlich) ein Asset für diesen Slot? Synchron, für die Darstellung. */
+  hasAsset(slot: AssetSlot): boolean {
+    return this.debugAssets.has(slot) || Boolean(this.state.assets[slot]) || Boolean(configuredAssetSrc(slot));
+  }
+
+  /** Asset als Blob (für das PDF). Fehlt es oder schlägt der Download fehl → null, nie ein Fehler. */
+  async getAssetBlob(slot: AssetSlot): Promise<Blob | null> {
+    try {
+      const url = await this.getAssetUrl(slot);
+      if (!url) return null;
+      const res = await fetch(url);
+      return res.ok ? await res.blob() : null;
+    } catch {
+      return null;
+    }
   }
 
   setResponse(questionId: QuestionId, value: string): void {
@@ -294,8 +397,27 @@ export class TripStore {
     safeStorage.remove(this.storageKey);
     safeStorage.remove(`${this.storageKey}:privacy`);
     safeStorage.remove(`${this.storageKey}:finale`);
-    this.local = { progress: initialProgress(), progressDirty: false, responses: {}, dirtyResponses: [] };
-    this.setState({ progress: this.local.progress, responses: {}, photos: {}, pending: false });
+    this.local = {
+      progress: initialProgress(),
+      progressDirty: false,
+      responses: {},
+      dirtyResponses: [],
+      readMessages: [],
+      pendingReads: [],
+    };
+    this.setState({ progress: this.local.progress, responses: {}, photos: {}, pending: false, messages: [] });
+  }
+
+  /** Debug: simuliertes Asset (z. B. erzeugtes Audio/Video) – nur im Speicher. */
+  debugSetAsset(slot: AssetSlot, url: string): void {
+    this.debugAssets.set(slot, url);
+    this.setState({ assets: { ...this.state.assets } });
+  }
+
+  /** Debug: eine Nachricht so anzeigen, als käme sie aus dem Dashboard. */
+  debugAddMessage(body: string): void {
+    const message: LiveMessage = { id: `debug-${Date.now()}`, body, heart: true, createdAt: new Date().toISOString(), readAt: null };
+    this.setState({ messages: [...this.state.messages, message] });
   }
 
   /** Debug: Fortschritt hart setzen (ohne Merge). */
@@ -387,6 +509,16 @@ export class TripStore {
       }
     }
 
+    for (const id of [...this.local.pendingReads]) {
+      try {
+        await this.backend.markMessageRead(id);
+        this.local = { ...this.local, pendingReads: this.local.pendingReads.filter((r) => r !== id) };
+        this.writeLocal();
+      } catch {
+        failed = true;
+      }
+    }
+
     const stored = await photoStore.list(this.tripKey);
     for (const photo of stored.filter((p) => p.status === 'pending')) {
       try {
@@ -445,6 +577,8 @@ export class TripStore {
       progressDirty: raw?.progressDirty === true,
       responses,
       dirtyResponses: dirtyRaw.filter((q): q is QuestionId => typeof q === 'string' && q in responses),
+      readMessages: stringList(raw?.readMessages),
+      pendingReads: stringList(raw?.pendingReads),
     };
   }
 
@@ -470,5 +604,24 @@ export class TripStore {
       remotePath: meta.remotePath,
       hasLocal: true,
     };
+  }
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string').slice(-200) : [];
+}
+
+function configuredAssetSrc(slot: AssetSlot): string | null {
+  switch (slot) {
+    case 'familyVideo':
+      return family.familyVideo.src;
+    case 'familyVideoPoster':
+      return family.familyVideo.poster;
+    case 'audioDjordje':
+    case 'audioBogdana':
+    case 'audioLazar':
+      return family.familyMessages.find((m) => m.slot === slot)?.src ?? null;
+    default:
+      return family.memoryAssets[slot].src;
   }
 }

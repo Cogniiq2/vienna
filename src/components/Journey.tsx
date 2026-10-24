@@ -1,53 +1,84 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CHAPTER_IDS, type ChapterId } from '../config/chapters';
+import { CHAPTER_IDS, seenKey, STORY, type ChapterId } from '../config/chapters';
 import { useLanguage } from '../i18n/context';
-import { currentChapterIndex } from '../lib/progress';
+import { toRoman } from '../lib/format';
+import { currentChapterIndex, currentStepIndex } from '../lib/progress';
 import { useTripState, useTripStore } from '../state/context';
 import { ChapterView } from './ChapterView';
 import { ArrowBackIcon } from './Icons';
 import { LockedChapter } from './LockedChapter';
 import { StoryProgress } from './StoryProgress';
+import { StorySequence } from './StorySequence';
 import { UnlockInterlude } from './UnlockInterlude';
 
+/** Der Tag: Erinnerung → Kapitel → Erinnerung → Kapitel … */
 export function Journey() {
   const { t } = useLanguage();
   const store = useTripStore();
   const { progress } = useTripState();
   const [viewing, setViewing] = useState<ChapterId | null>(null);
-  const [interlude, setInterlude] = useState<number | null>(null);
+  const [unlock, setUnlock] = useState<number | null>(null);
 
-  const currentIndex = currentChapterIndex(progress);
-  const currentId = CHAPTER_IDS[currentIndex] ?? null;
+  const stepIndex = currentStepIndex(progress);
+  const step = STORY[stepIndex] ?? null;
+  const nextStep = STORY[stepIndex + 1] ?? null;
+  const chapterIdx = currentChapterIndex(progress);
 
   const select = useCallback((id: ChapterId | null) => {
     setViewing(id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  // Wird ein angesehenes Kapitel per Reset/anderem Gerät ungültig, zurück zum aktuellen.
   const effectiveViewing = viewing && progress.completed.includes(viewing) ? viewing : null;
 
   const handleCompleted = useCallback(
     (id: ChapterId) => {
-      const idx = CHAPTER_IDS.indexOf(id);
       store.completeChapter(id);
-      if (idx < CHAPTER_IDS.length - 1) setInterlude(idx + 1);
+      const after = STORY[STORY.findIndex((s) => s.kind === 'chapter' && s.id === id) + 1];
+      // Folgt direkt ein Kapitel, öffnet sich das Schloss. Folgt eine Erinnerung, ist sie selbst der Übergang.
+      if (after?.kind === 'chapter') setUnlock(CHAPTER_IDS.indexOf(after.id));
       window.scrollTo({ top: 0 });
     },
     [store],
   );
 
-  const endInterlude = useCallback(() => setInterlude(null), []);
+  const interludeId = step?.kind === 'interlude' ? step.id : null;
+  const finishInterlude = useCallback(() => {
+    if (!interludeId) return;
+    store.markSeen(seenKey.interlude(interludeId));
+    if (nextStep?.kind === 'chapter') setUnlock(CHAPTER_IDS.indexOf(nextStep.id));
+    window.scrollTo({ top: 0 });
+  }, [store, interludeId, nextStep]);
+
+  const endUnlock = useCallback(() => setUnlock(null), []);
 
   useEffect(() => {
-    if (interlude === null) window.scrollTo({ top: 0 });
-  }, [interlude, currentId]);
+    if (unlock === null) window.scrollTo({ top: 0 });
+  }, [unlock, stepIndex]);
 
-  if (!currentId) return null;
+  if (!step) return null;
+
+  if (step.kind === 'interlude' && !effectiveViewing) {
+    const doneLabel = nextStep?.kind === 'chapter' ? t.chapter.toChapter(toRoman(CHAPTER_IDS.indexOf(nextStep.id) + 1)) : undefined;
+    return (
+      <div className="journey journey--interlude">
+        <StorySequence
+          key={step.id}
+          frames={t.interludes[step.id]}
+          onDone={finishInterlude}
+          doneLabel={doneLabel}
+          eyebrow={t.pdf.memoryEyebrow}
+        />
+        {unlock !== null && <UnlockInterlude index={unlock} onDone={endUnlock} />}
+      </div>
+    );
+  }
+
+  const currentId = step.kind === 'chapter' ? step.id : null;
 
   return (
-    <div className="journey page">
-      <StoryProgress progress={progress} currentIndex={currentIndex} viewing={effectiveViewing} onSelect={select} />
+    <div className="journey">
+      <StoryProgress progress={progress} currentIndex={chapterIdx} viewing={effectiveViewing} onSelect={select} />
 
       {effectiveViewing ? (
         <>
@@ -59,13 +90,15 @@ export function Journey() {
           <ChapterView key={`review-${effectiveViewing}`} chapterId={effectiveViewing} mode="review" />
         </>
       ) : (
-        <>
-          <ChapterView key={currentId} chapterId={currentId} mode="current" onCompleted={handleCompleted} />
-          {currentIndex + 1 < CHAPTER_IDS.length && <LockedChapter index={currentIndex + 1} />}
-        </>
+        currentId && (
+          <>
+            <ChapterView key={currentId} chapterId={currentId} mode="current" onCompleted={handleCompleted} />
+            {chapterIdx + 1 < CHAPTER_IDS.length && <LockedChapter index={chapterIdx + 1} />}
+          </>
+        )
       )}
 
-      {interlude !== null && <UnlockInterlude index={interlude} onDone={endInterlude} />}
+      {unlock !== null && <UnlockInterlude index={unlock} onDone={endUnlock} />}
     </div>
   );
 }

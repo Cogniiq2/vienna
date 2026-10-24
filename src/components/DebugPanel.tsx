@@ -1,14 +1,35 @@
 import { useState } from 'react';
-import { CHAPTER_IDS } from '../config/chapters';
+import { CHAPTER_IDS, FINALE_STAGES, QUESTIONS, seenKey, STORY, type QuestionId } from '../config/chapters';
+import type { AssetSlot } from '../config/family';
+import { forceEpilogue } from '../lib/epilogue';
 import { createPlaceholderPhoto } from '../lib/image';
-import { currentChapterId, initialProgress, progressAtChapter, type TripProgress } from '../lib/progress';
+import { createDebugAudio, createDebugVideo } from '../lib/debugMedia';
+import { currentChapterId, initialProgress, progressAtStep, type TripProgress } from '../lib/progress';
 import { useTripState, useTripStore } from '../state/context';
+
+const SAMPLE_ANSWERS: Record<QuestionId, string> = {
+  'morning.firstAwake': 'father',
+  'morning.noWork': 'try',
+  'tennis.mother.favorite': 'Синер',
+  'tennis.father.food': 'set',
+  'spa.lastDay': 'Искрено, не сећамо се. Можда пре тридесет година, на мору.',
+  'dinner.still': 'Што се и даље смејемо истим глупостима.',
+  'dinner.moment': 'Шетња кроз парк у Шенбруну, без журбе.',
+  'dinner.repeat': 'Сауну. И доручак без сата.',
+  'epilogue.takeaway': 'Да можемо и ми понекад да станемо.',
+};
+
+const STEP_LABELS: Record<string, string> = {
+  gradskiKlub: 'Gradski Klub',
+  wedding: 'Hochzeit',
+  family: 'Familie',
+  work: 'Arbeit',
+};
 
 /**
  * Entwickler-Werkzeug (nicht für die Eltern):
  * - im Dev-Server mit ?debug=true
  * - in Builds nur, wenn VITE_ENABLE_DEBUG=true gesetzt ist, ebenfalls mit ?debug=true
- * Bewusst deutschsprachig und schlicht.
  */
 export function DebugPanel() {
   const store = useTripStore();
@@ -17,7 +38,7 @@ export function DebugPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const run = async (label: string, action: () => Promise<void>) => {
+  const run = async (label: string, action: () => Promise<void> | void) => {
     setBusy(label);
     setMessage(null);
     try {
@@ -30,21 +51,41 @@ export function DebugPanel() {
     }
   };
 
-  const jump = (progress: TripProgress) => run('Sprung', () => store.debugSetProgress(progress));
+  const jump = (label: string, progress: TripProgress) => run(label, () => store.debugSetProgress(progress));
+  const finaleAt = (stages: number) =>
+    progressAtStep(STORY.length, undefined, FINALE_STAGES.slice(0, stages).map((s) => seenKey.finale(s)));
 
-  const simulate = (all: boolean) =>
-    run(all ? 'Alle Fotos simuliert' : 'Foto simuliert', async () => {
+  const simulatePhotos = (all: boolean) =>
+    run(all ? 'Fotos + Antworten' : 'Foto (aktuell)', async () => {
       const ids = all ? CHAPTER_IDS : [currentChapterId(state.progress) ?? 'morning'];
       for (const id of ids) {
         const index = CHAPTER_IDS.indexOf(id);
-        const image = await createPlaceholderPhoto(`${index + 1} · ${id}`, index);
-        await store.savePhoto(id, image);
+        await store.savePhoto(id, await createPlaceholderPhoto(`${index + 1} · ${id}`, index));
       }
-      if (all) {
-        store.setResponse('tennis.winner.mother', 'Test A');
-        store.setResponse('tennis.winner.father', 'Test B');
-        store.setResponse('dinner.moment', 'Testantwort: der Spaziergang nach dem Abendessen.');
+      if (all) for (const q of Object.keys(QUESTIONS) as QuestionId[]) store.setResponse(q, SAMPLE_ANSWERS[q]);
+    });
+
+  const simulateFamilyPhotos = () =>
+    run('Familienfotos', async () => {
+      const slots: AssetSlot[] = ['gradskiKlub', 'wedding', 'familyEarly', 'familyCurrent'];
+      for (const [i, slot] of slots.entries()) {
+        const image = await createPlaceholderPhoto(slot, i + 2);
+        store.debugSetAsset(slot, URL.createObjectURL(image.blob));
       }
+    });
+
+  const simulateAudio = () =>
+    run('Audios', () => {
+      (['audioDjordje', 'audioBogdana', 'audioLazar'] as const).forEach((slot, i) =>
+        store.debugSetAsset(slot, URL.createObjectURL(createDebugAudio(3 + i, 330 + i * 110))),
+      );
+    });
+
+  const simulateVideo = () =>
+    run('Video', async () => {
+      const video = await createDebugVideo();
+      if (!video) throw new Error('MediaRecorder in diesem Browser nicht verfügbar');
+      store.debugSetAsset('familyVideo', URL.createObjectURL(video));
     });
 
   const reset = () => {
@@ -60,6 +101,7 @@ export function DebugPanel() {
     );
   }
 
+  const disabled = Boolean(busy);
   return (
     <aside className="debug" aria-label="Debug">
       <div className="debug__head">
@@ -69,34 +111,80 @@ export function DebugPanel() {
         </button>
       </div>
       <p className="debug__meta">
-        Phase: <b>{state.progress.phase}</b> · erledigt: {state.progress.completed.length}/6 · Verbindung:{' '}
+        Phase: <b>{state.progress.phase}</b> · Kapitel {state.progress.completed.length}/6 · gesehen {state.progress.seen.length} ·{' '}
         <b>{state.connection}</b>
         {state.pending ? ' · ausstehend' : ''}
       </p>
+
+      <p className="debug__label">Ablauf</p>
       <div className="debug__grid">
-        <button type="button" disabled={!!busy} onClick={() => void jump({ ...initialProgress(), phase: 'opening' })}>
+        <button type="button" disabled={disabled} onClick={() => void jump('Opening', initialProgress())}>
           Opening
         </button>
-        <button type="button" disabled={!!busy} onClick={() => void jump({ ...initialProgress(), phase: 'intro' })}>
+        <button type="button" disabled={disabled} onClick={() => void jump('Intro', { ...initialProgress(), phase: 'intro' })}>
           Intro
         </button>
-        {CHAPTER_IDS.map((id, i) => (
-          <button key={id} type="button" disabled={!!busy} onClick={() => void jump(progressAtChapter(i))}>
-            K{i + 1}
+        {STORY.map((step, i) => (
+          <button key={`${step.kind}-${step.id}`} type="button" disabled={disabled} onClick={() => void jump(step.id, progressAtStep(i))}>
+            {step.kind === 'chapter' ? `K${CHAPTER_IDS.indexOf(step.id) + 1}` : `♡ ${STEP_LABELS[step.id] ?? step.id}`}
           </button>
         ))}
-        <button type="button" disabled={!!busy} onClick={() => void jump(progressAtChapter(CHAPTER_IDS.length))}>
-          Finale / PDF
+      </div>
+
+      <p className="debug__label">Finale</p>
+      <div className="debug__grid">
+        <button type="button" disabled={disabled} onClick={() => void jump('Finale', finaleAt(0))}>
+          Noch etwas
+        </button>
+        <button type="button" disabled={disabled} onClick={() => void jump('Video/Audio', finaleAt(1))}>
+          Video/Audio
+        </button>
+        <button type="button" disabled={disabled} onClick={() => void jump('Bonus', finaleAt(2))}>
+          Bonus
+        </button>
+        <button type="button" disabled={disabled} onClick={() => void jump('Ваш дан', finaleAt(3))}>
+          Album / PDF
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            forceEpilogue();
+            void jump('Epilog freigeschaltet (Album öffnen)', finaleAt(3));
+          }}
+        >
+          Epilog
         </button>
       </div>
+
+      <p className="debug__label">Simulieren</p>
       <div className="debug__grid">
-        <button type="button" disabled={!!busy} onClick={() => void simulate(false)}>
+        <button type="button" disabled={disabled} onClick={() => void simulatePhotos(false)}>
           Foto (aktuell)
         </button>
-        <button type="button" disabled={!!busy} onClick={() => void simulate(true)}>
+        <button type="button" disabled={disabled} onClick={() => void simulatePhotos(true)}>
           Alle Fotos + Antworten
         </button>
-        <button type="button" disabled={!!busy} className="debug__danger" onClick={reset}>
+        <button type="button" disabled={disabled} onClick={() => void simulateFamilyPhotos()}>
+          Familienfotos
+        </button>
+        <button type="button" disabled={disabled} onClick={() => void simulateAudio()}>
+          Audios
+        </button>
+        <button type="button" disabled={disabled} onClick={() => void simulateVideo()}>
+          Video
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => void run('Nachricht', () => store.debugAddMessage('Видимо да сте преживели тенис 😄'))}
+        >
+          Live-Nachricht
+        </button>
+        <a className="debug__link" href="/admin?demo=1" target="_blank" rel="noreferrer">
+          Admin (Demo-Daten)
+        </a>
+        <button type="button" disabled={disabled} className="debug__danger" onClick={reset}>
           Reset alles
         </button>
       </div>

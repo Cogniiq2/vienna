@@ -10,6 +10,8 @@ export function createLocalBackend(): TripBackend {
     saveResponse: () => Promise.resolve(),
     uploadPhoto: () => Promise.resolve(null),
     downloadPhoto: () => Promise.reject(new BackendError('not-connected')),
+    markMessageRead: () => Promise.resolve(),
+    assetUrl: () => Promise.reject(new BackendError('not-connected')),
     reset: () => Promise.resolve(),
   };
 }

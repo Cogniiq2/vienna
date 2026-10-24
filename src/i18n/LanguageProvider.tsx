@@ -21,6 +21,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   const t = dictionaries[lang];
 
   useEffect(() => {
+    if (window.location.pathname.startsWith('/admin')) return; // Admin setzt eigenen Titel
     document.documentElement.lang = t.meta.htmlLang;
     document.title = t.meta.documentTitle;
   }, [t]);

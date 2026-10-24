@@ -1,4 +1,5 @@
 import type { ChapterId, QuestionId } from '../../config/chapters';
+import type { AssetSlot } from '../../config/family';
 import type { Language } from '../../content';
 import type { Responses, TripProgress } from '../progress';
 
@@ -8,10 +9,28 @@ export interface RemoteUpload {
   capturedAt: string;
 }
 
+/** Kleine Nachricht der Kinder (aus dem Admin-Dashboard). */
+export interface LiveMessage {
+  id: string;
+  body: string;
+  heart: boolean;
+  createdAt: string;
+  readAt: string | null;
+}
+
+/** Ein im Dashboard hochgeladenes Familien-Asset (privater Bucket). */
+export interface RemoteAsset {
+  slot: AssetSlot;
+  path: string;
+  mime: string | null;
+}
+
 export interface RemoteSnapshot {
   progress: TripProgress;
   responses: Responses;
   uploads: Partial<Record<ChapterId, RemoteUpload>>;
+  messages: LiveMessage[];
+  assets: Partial<Record<AssetSlot, RemoteAsset>>;
 }
 
 export type BackendErrorCode = 'invalid-token' | 'unreachable' | 'not-connected';
@@ -32,10 +51,13 @@ export class BackendError extends Error {
  */
 export interface TripBackend {
   readonly mode: 'supabase' | 'local';
-  connect(token: string): Promise<RemoteSnapshot | null>;
+  connect(token: string, device: string): Promise<RemoteSnapshot | null>;
   saveProgress(progress: TripProgress, language: Language): Promise<TripProgress | null>;
   saveResponse(questionId: QuestionId, value: string, updatedAt: string): Promise<void>;
   uploadPhoto(chapterId: ChapterId, blob: Blob, capturedAt: string): Promise<string | null>;
   downloadPhoto(path: string): Promise<Blob>;
+  markMessageRead(id: string): Promise<void>;
+  /** Signierte, kurzlebige URL für ein privates Familien-Asset. */
+  assetUrl(path: string): Promise<string>;
   reset(): Promise<void>;
 }

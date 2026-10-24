@@ -156,7 +156,7 @@
   opacity: 0.55;
 }
 
-.info-card .btn {
+.btn--link {
   width: 100%;
   justify-content: flex-start;
 }
@@ -323,51 +323,8 @@
    Page (Intro, Journey, Finale)
    ========================================================================== */
 
-.page {
-  display: flex;
-  flex-direction: column;
-  padding: 2.5rem 0 1rem;
-}
-
 .page__action {
   margin-top: 3rem;
-}
-
-.intro {
-  gap: 1.75rem;
-}
-
-.intro__greeting {
-  margin-top: 0.25rem;
-}
-
-.intro__heart {
-  display: inline-block;
-  margin-left: 0.4rem;
-  color: var(--accent);
-  vertical-align: 0.15em;
-}
-
-.intro__text {
-  display: flex;
-  flex-direction: column;
-  gap: 1.35rem;
-  margin-top: 1rem;
-}
-
-.intro__highlight {
-  margin: 1.25rem 0;
-  padding: 1.75rem 0;
-  border-top: 1px solid var(--line-strong);
-  border-bottom: 1px solid var(--line-strong);
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.intro__highlight-text {
-  font-size: clamp(1.75rem, 7vw, 2.25rem);
-  line-height: 1.15;
 }
 
 /* =============================================================================
@@ -441,14 +398,6 @@
   flex-direction: column;
 }
 
-.chapter__header {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  padding-top: 0.5rem;
-}
-
 .chapter__numeral {
   font-family: var(--font-serif);
   font-weight: 300;
@@ -478,13 +427,6 @@
   padding: 0.5rem 0 0.25rem;
   border-top: 1px solid var(--accent-soft);
   border-bottom: 1px solid var(--accent-soft);
-}
-
-.chapter__body {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  margin-top: 1.75rem;
 }
 
 .chapter__note {
@@ -553,156 +495,6 @@
 
 .tasks[data-style='ritual'] .tasks__title {
   font-size: 1.25rem;
-}
-
-/* Info card */
-.info-card {
-  display: flex;
-  flex-direction: column;
-  gap: 1.1rem;
-  padding: 1.5rem 1.35rem;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 18px 40px -28px rgba(23, 23, 20, 0.18);
-}
-
-.info-card__rows {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.info-card__row {
-  display: grid;
-  grid-template-columns: minmax(6.5rem, 38%) 1fr;
-  gap: 1rem;
-  padding: 0.8rem 0;
-  border-top: 1px solid var(--line);
-}
-
-.info-card__row dt {
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  line-height: 1.5;
-  padding-top: 0.1rem;
-}
-
-.info-card__row dd {
-  margin: 0;
-  font-size: 0.9375rem;
-  font-weight: 500;
-  color: var(--ink);
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.info-card__row dd[data-empty='true'] {
-  font-weight: 400;
-  color: var(--muted);
-}
-
-.info-card__actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-/* Challenge */
-.challenge {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 1.5rem 1.35rem;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, rgba(216, 200, 172, 0.22), rgba(216, 200, 172, 0.08));
-  border: 1px solid rgba(179, 154, 114, 0.28);
-}
-
-.challenge__optional {
-  color: var(--muted);
-  letter-spacing: 0.12em;
-  font-weight: 500;
-}
-
-/* Questions */
-.question {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 1.5rem 0 0.5rem;
-}
-
-.question__fields {
-  display: grid;
-  gap: 1rem;
-  margin-top: 0.5rem;
-}
-
-.question__fields--pair {
-  grid-template-columns: 1fr 1fr;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  position: relative;
-}
-
-.field__label {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.field__input {
-  width: 100%;
-  min-height: 3.25rem;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--paper);
-  font-family: var(--font-serif);
-  font-size: 1.25rem;
-  line-height: 1.35;
-  color: var(--ink);
-  transition: border-color 0.3s var(--ease-soft), box-shadow 0.3s var(--ease-soft);
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.field__input::placeholder {
-  color: #a39d93;
-}
-
-.field__input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(179, 154, 114, 0.18);
-}
-
-.field__textarea {
-  resize: vertical;
-  min-height: 8rem;
-}
-
-.question__saved {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  min-height: 1.25rem;
-  font-size: 0.75rem;
-  color: var(--accent-ink);
-  opacity: 0;
-  transition: opacity 0.4s var(--ease-soft);
-}
-
-.question__saved[data-visible='true'] {
-  opacity: 1;
 }
 
 /* =============================================================================
@@ -1009,43 +801,6 @@
   margin-bottom: 0.25rem;
 }
 
-/* =============================================================================
-   Finale & Memory
-   ========================================================================== */
-
-.finale {
-  padding-top: 4rem;
-}
-
-.finale__text {
-  display: flex;
-  flex-direction: column;
-  gap: 1.6rem;
-}
-
-.finale__first {
-  margin-bottom: 1.5rem;
-}
-
-.finale__line {
-  color: var(--ink-2);
-}
-
-.finale__love {
-  margin-top: 1.5rem;
-}
-
-.finale__signature {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-top: 1rem;
-}
-
-.finale__heart {
-  color: var(--accent);
-}
-
 .memory {
   display: flex;
   flex-direction: column;
@@ -1191,8 +946,8 @@
   :root {
     --gutter: 2.5rem;
   }
-  .page {
-    padding-top: 4rem;
+  .journey {
+    padding-top: 3rem;
   }
   .btn--large {
     max-width: 24rem;

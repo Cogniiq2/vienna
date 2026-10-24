@@ -1,137 +1,128 @@
 # Беч · 27. октобар 2026.
 
-Eine private, interaktive Geschenk-Experience für Mama & Papa: Ein Tag in Wien, der sich Kapitel für Kapitel enthüllt.
-Am Ende steht automatisch ein Erinnerungs-PDF mit ihren Fotos und Antworten.
+Ein privates Geschenk von Đorđe, Bogdana und Lazar an Mama und Tata: ein Tag in Wien, der sich Kapitel für Kapitel enthüllt –
+dazwischen Seiten aus dem Familienalbum, am Abend ein Brief, ein Video, drei Stimmen und eine stille Bonus-Sequenz.
+Am Ende entsteht ein kleines Familien-Reisejournal als PDF. Am Mittwochmorgen folgt ein ruhiger Epilog.
 
-- **Sprache:** Serbisch (Kyrillisch) als Standard, Deutsch per Umschalter (`СР | DE`, gespeichert, ohne Reload)
-- **Stack:** Vite + React 19 + TypeScript (strict), Supabase (Postgres, Storage, anonyme Auth), pdf-lib
+- **Sprache:** Serbisch (Kyrillisch) als Standard, Deutsch per `СР | DE`. „Јел’ знате?“ wird nie übersetzt und nie erklärt.
+- **Stack:** Vite + React 19 + TypeScript (strict), Supabase (Postgres, Storage, Auth, Realtime), pdf-lib
 - **Hosting:** Cloudflare Pages (statisch, SPA)
 
 ---
 
-## Architektur
+## Ablauf
 
 ```
-src/
-  config/trip.ts        ← ALLE Reisedaten (Hotel, Tickets, Restaurant, Uhrzeiten). Hier pflegen.
-  config/chapters.ts    ← Ablauf der 6 Kapitel (Foto Pflicht?, Kamera, Info-Karte, Fragen)
-  content/sr.ts, de.ts  ← ALLE Texte (i18n). Typ: content/types.ts. Test prüft gleiche Struktur.
-  state/tripStore.ts    ← Zustand + Sync-Engine (local first, Server = Source of Truth)
-  lib/backend/          ← Supabase-Anbindung bzw. lokaler Fallback
-  lib/photoStore.ts     ← IndexedDB-Queue für Fotos (Offline / Stadion)
-  lib/image.ts          ← Clientseitige Kompression (max. 2000 px, JPEG 86 %)
-  pdf/generateMemory.ts ← Echtes PDF-Layout (200 × 250 mm), Fonts eingebettet (Kyrillisch)
-  components/           ← Opening, Intro, Journey/ChapterView, PhotoCapture, FinalReveal, MemoryGenerator …
-supabase/migrations/    ← Komplettes Schema, RPC-Funktionen, RLS, Storage-Bucket + Policies
-public/_headers         ← noindex, CSP, Referrer-Policy für Cloudflare
-public/fonts/pdf/       ← TTF-Fonts fürs PDF (auf Latein + Kyrillisch reduziert, OFL)
+Opening („Јел’ знате?“ → „За маму и тату.“) → Intro (Brief)
+→ ♡ Gradski Klub → I Frühstück → ♡ Hochzeit → II Gym → ♡ Aus zwei wurden fünf
+→ III Wien → IV Vienna Open → ♡ Was ihr aufgebaut habt → V Sauna → VI Dinner
+→ „Имамо још нешто.“ + Brief → Video & drei Stimmen → „Још нешто. Само за вас двоје.“ (Bonus, Vollbild)
+→ „Ваш дан.“ (Album + PDF) → Mittwoch: Epilog „Још мало Беча.“
 ```
+♡ = Memory Interlude (Album-Seiten ohne Aufgaben). Fehlt ein Foto, wird nur das Bild weggelassen – nie ein leerer Rahmen.
 
-### Datenfluss
-1. Jede Aktion wird **sofort lokal** gespeichert (localStorage + IndexedDB) → nichts geht verloren, Seite reagiert sofort.
-2. Danach Sync zum Server. Fortschritt wird **monoton** zusammengeführt (Kapitel nur hinzufügen, Phasen nur vorwärts) → Mama und Papa können parallel auf zwei Handys arbeiten.
-3. Fehlgeschlagene Uploads bleiben „pending“ und werden automatisch erneut gesendet (`online`-Event, Tab-Rückkehr, alle 15 s).
+## Wo trage ich was ein?
 
-### Sicherheit
-- Kein Login. Zugang nur über `/trip/<token>` (192 Bit Zufall). In der DB liegt nur der **SHA-256-Hash**.
-- Jedes Gerät bekommt automatisch eine **anonyme Supabase-Session**; `join_trip(token)` verknüpft sie mit dem Trip.
-- Tabellen sind für Clients **komplett gesperrt** (RLS ohne Policies, keine Grants). Alle Zugriffe über `SECURITY DEFINER`-Funktionen mit Mitgliedschaftsprüfung.
-- Fotos im **privaten** Bucket `memories`, Zugriff per RLS nur auf den eigenen Trip-Ordner. Kein öffentliches Listing, keine öffentlichen URLs.
-- Kein Service-Role-Key im Frontend. `noindex` per Meta + Header + robots.txt. `Referrer-Policy: no-referrer` (Token leakt nicht).
+| Was | Wo |
+|---|---|
+| Namen, Familienfotos, Video, Audios, Musik | `src/config/family.ts` (bzw. Upload im Admin) |
+| Hotel, Tickets, Restaurant, Uhrzeiten, Epilog-Orte | `src/config/trip.ts` |
+| Alle Texte | `src/content/sr.ts`, `src/content/de.ts` |
+| Ablauf/Fragen pro Kapitel | `src/config/chapters.ts` |
+
+### Familienfotos, Video, Audios – empfohlen: im Admin hochladen
+`/admin` → „Familien-Assets (privat)“ → je Slot „hochladen“:
+
+| Slot | Inhalt |
+|---|---|
+| Gradski Klub | altes Foto als junges Paar |
+| Hochzeit | Hochzeitsfoto |
+| Kinder klein / Urlaub | frühes Familienfoto |
+| Familie heute | aktuelles Foto mit allen fünf (kommt kurz vor Schluss) |
+| Mama & Tata heute | optional; sonst wird das heutige Dinner-Foto genommen |
+| Familienvideo + Vorschaubild | mp4/mov (Größe ≤ Supabase-Dateilimit, Free-Plan 50 MB) |
+| Sprachnachricht Đorđe / Bogdana / Lazar | m4a/mp3 |
+
+Dateien liegen im **privaten** Bucket `family`; die Eltern bekommen nur kurzlebige signierte Links. Kein Code-Änderung nötig.
+Bildunterschrift/Jahr/Ort der alten Fotos: `family.memoryAssets.<slot>.caption | year | location`.
+Abschriften (Barrierefreiheit): `family.familyMessages[].transcript`, `family.familyVideo.transcript`, Untertitel `captionsSrc`.
+Alternativ (nur lokal/Demo): `src` auf eine URL setzen – Dateien in `/public` sind aber öffentlich.
+
+### Musik
+`family.music.morning | spa | finale = { title, artist, spotifyUrl, appleMusicUrl, youtubeUrl }`.
+Nur Streaming-Links, kein Autoplay, leere Einträge werden nicht angezeigt.
+
+### Noch offen in `trip.ts`
+Hoteladresse, Vienna-Open-Arena/Plätze/Ticket-Link, Restaurant (italienisch – Name, Adresse, Uhrzeit, Reservierungsname),
+optionale Kapitel-Uhrzeiten, 2–3 Epilog-Orte (`epilogue.locations`). Fehlende Werte zeigen „Биће допуњено“.
 
 ---
 
-## 1. ENV-Variablen
+## Supabase
 
-Siehe `.env.example`:
+### Migrationen (beide, in dieser Reihenfolge, im SQL-Editor oder per `supabase db push`)
+1. `supabase/migrations/20261024000000_vienna_gift.sql` – Grundschema (falls noch nicht ausgeführt)
+2. `supabase/migrations/20261025000000_story_admin_messages.sql` – Story-Fortschritt, Admin, Nachrichten, Familien-Assets, Realtime
 
-| Variable | Pflicht | Beschreibung |
-|---|---|---|
-| `VITE_SUPABASE_URL` | ja (sonst lokaler Modus) | `https://<ref>.supabase.co` |
-| `VITE_SUPABASE_ANON_KEY` | ja (sonst lokaler Modus) | anon/publishable Key (öffentlich, nie service_role) |
-| `VITE_ENABLE_DEBUG` | nein | `true` nur für Preview-Deployments |
+Beide sind idempotent. Lokal testbar: `PGHOST=… PGPORT=… supabase/tests/run.sh` (leeres Postgres 16).
 
-Fehlen die Supabase-Werte, crasht nichts: die App läuft komplett lokal auf dem Gerät (inkl. PDF).
-
-## 2. Supabase einrichten (einmalig, ~10 Minuten)
-
-1. Projekt anlegen (Region z. B. Frankfurt).
-2. **Authentication → Sign In / Providers → „Allow anonymous sign-ins“ aktivieren.** (Ohne das funktioniert der Server-Sync nicht.)
-3. **SQL Editor** → Inhalt von `supabase/migrations/20261024000000_vienna_gift.sql` einfügen und ausführen
-   (oder per CLI: `supabase link` + `supabase db push`). Das Skript ist idempotent.
-4. Trip anlegen:
-   ```bash
-   npm run trip:create -- https://<dein-projekt>.pages.dev
+### Einstellungen im Dashboard
+1. **Authentication → Sign In / Providers:** „Allow anonymous sign-ins“ **an** (Eltern-Geräte), **Email** an.
+2. **Authentication → URL Configuration:** Site URL = deine Pages-URL; unter Redirect URLs `https://<deine-domain>/admin` (und `http://localhost:5173/admin`) eintragen.
+3. **Optional, empfohlen:** Authentication → Email Templates → „Magic Link“: `{{ .Token }}` in den Text aufnehmen. Dann kannst du dich auch per 6-stelligem Code anmelden (praktisch, wenn der Link im Mail-App-Browser statt in Safari aufgeht).
+4. **Admin-User anlegen:** Authentication → Users → „Add user“ → „Send invitation“ / „Create new user“ mit deiner E-Mail.
+5. **Admin freischalten (SQL-Editor):**
+   ```sql
+   insert into private.admins (email) values ('deine@mail.de');
    ```
-   Das ausgegebene `select public.create_trip(...)` im SQL-Editor ausführen. Den ausgegebenen Link bekommen die Eltern.
-5. URL + anon Key in Cloudflare (und lokal in `.env.local`) eintragen.
+6. Trip anlegen (falls noch nicht): `npm run trip:create -- https://<projekt>.pages.dev` → ausgegebenes SQL ausführen.
 
-## 3. Was in `src/config/trip.ts` noch fehlt
+### Sicherheitsmodell
+- Eltern: anonyme Session pro Gerät, Zugang nur über den geheimen Trip-Link (DB speichert nur den SHA-256-Hash).
+- Tabellen sind für Clients gesperrt; Schreiben nur über `SECURITY DEFINER`-Funktionen mit Mitgliedschafts- bzw. Admin-Prüfung.
+- Admin = E-Mail-Login **und** Eintrag in `private.admins` (in der DB geprüft; anonyme Sessions können nie Admin sein).
+  Admin liest per RLS-Policies (nötig für Realtime); `token_hash` bleibt auch für Admins unsichtbar.
+- Fotos (`memories`) und Familien-Assets (`family`): private Buckets, Zugriff nur für Mitglieder des Trips bzw. Admins, nur signierte URLs.
+- Kein Service-Role-Key im Browser, kein Passwort im Bundle. `/admin` ist nicht verlinkt, aber die Sicherheit hängt nicht an der URL.
 
-Alles mit `null` / `TODO`. Fehlende Werte zeigen „Биће допуњено / Wird noch ergänzt“ — nichts wird erfunden.
+---
 
-- **Hotel:** `name`, `address`, `mapsUrl`, optional `gymNotes`, `spaNotes`
-- **Vienna Open:** `venue`, `venueAddress`, `session` (nur bestätigte Spieler/Matches), `entryTime`, `startTime`, `departureTime`, `seatInfo`, `ticketUrl` oder `ticketPdf`, `navigationUrl`, `notes`
-- **Restaurant:** `name`, `address`, `reservationTime`, `reservationName`, `navigationUrl`, `notes`
-- **Optional:** `chapterTimes` (Uhrzeit pro Kapitel), `family.children` (Namen unter der Signatur)
+## Admin-Dashboard (`/admin`)
 
-Ohne `navigationUrl` wird aus der Adresse automatisch ein Google-Maps-Link gebaut.
-Texte ändern: `src/content/sr.ts` und `de.ts` (der Test `npm test` meldet, wenn eine Sprache einen Key nicht hat).
+- **Login:** E-Mail eingeben → Magic Link (oder Code) → nur Adressen aus `private.admins` kommen rein.
+- **Live:** Supabase Realtime auf `uploads`, `responses`, `messages`, `trip_members`, `trips` + Fallback-Polling alle 20 s.
+  Neue Fotos erscheinen ohne Neuladen (Anzeige „Live“ oben rechts).
+- **Zeigt:** aktuellen Schritt, erledigte Kapitel, Start/Ende, letzten Sync, aktive Geräte, alle Fotos mit Aufnahme- und Upload-Zeit (Original per signiertem Link), alle Antworten.
+- **Nachricht an Mama & Tata:** Text (+ optional Herz) → „Senden“. Erscheint bei den Eltern beim nächsten Sync (≤ 30 s, beim Öffnen sofort) als kleine Karte „Порука од нас.“ – keine Push-Benachrichtigung, keine Browser-Rechte. Gelesen/ungelesen ist im Dashboard sichtbar.
+- **Familien-Assets:** hochladen, ersetzen, ansehen, entfernen.
+- Demo ohne Server (nur Dev/Preview): `/admin?demo=1`.
 
-> ⚠️ Dateien in `/public` (z. B. ein Ticket-PDF) sind öffentlich abrufbar – nur mit kryptischem Dateinamen, besser `ticketUrl` verwenden. Ist das Git-Repo öffentlich, landen auch die Config-Daten dort.
+## Epilog
+Erscheint ab `trip.epilogue.availableFrom` (Mi 28.10., 06:00 Wiener Zeit) oben auf „Ваш дан.“. Keine Mission, keine Fotos:
+optionale Orte mit „Покажи пут“ und die Frage „Шта носите кући са овог путовања?“. Danach „Ажурирајте успомену“ – das PDF wird mit der Antwort neu erzeugt.
+Wurde das PDF schon Dienstag erstellt, einfach am Mittwoch neu erzeugen.
 
-## 4. Lokal testen
+## ENV-Variablen
+Keine neuen. Weiterhin `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, optional `VITE_ENABLE_DEBUG` (nur Preview). Siehe `.env.example`.
 
+## Lokal testen & Debug
 ```bash
-npm install
-npm run dev
-# ohne Supabase:      http://localhost:5173/trip/demo?debug=true
-# mit Supabase:       .env.local anlegen, dann http://localhost:5173/trip/<token>?debug=true
+npm install && npm run dev
+# http://localhost:5173/trip/demo?debug=true   (ohne Supabase, alles lokal)
 ```
+Debug-Panel („DBG“): zu jedem Schritt springen (Opening, Intro, alle Interludes ♡, K1–K6, Finale-Stationen, Album/PDF, Epilog),
+Fotos + alle Antworten simulieren, Familienfotos/Audios/Video simulieren (nur im Speicher), Live-Nachricht simulieren,
+Admin mit Demo-Daten öffnen, alles zurücksetzen.
 
-Auf dem echten Handy im selben WLAN: `npm run dev -- --host` und die angezeigte IP öffnen
-(Kamera-`capture` funktioniert über `http://` im LAN; für vollen Test besser das Preview-Deployment nutzen).
+## Testdaten zurücksetzen
+- **Empfohlen:** Trip-Link mit `?debug=true` (lokal oder Preview) → DBG → „Reset alles“ (Fortschritt, Antworten, Nachrichten, Tagesfotos – **Familien-Assets bleiben**).
+- **SQL:** `select public.admin_reset_trip('<token>');` (zusätzlich Geräte-Zuordnungen), danach Tagesfotos unter Storage → `memories/<trip_id>` löschen.
 
-## 5. Debug-Modus
+## Cloudflare Pages
+Build `npm run build`, Output `dist`, `NODE_VERSION=22`. SPA-Routing funktioniert ohne `_redirects` (keine `404.html`).
+`public/_headers`: noindex, CSP (erlaubt `*.supabase.co` für API, Realtime, signierte Bilder/Video/Audio), no-referrer.
 
-- **Dev-Server:** `?debug=true` an die URL hängen → kleiner „DBG“-Button unten rechts.
-- **Preview-Deployment:** `VITE_ENABLE_DEBUG=true` nur in der *Preview*-Umgebung von Cloudflare setzen, dann ebenfalls `?debug=true`.
-- **Production:** Panel ist nicht im Bundle aktivierbar (ohne `VITE_ENABLE_DEBUG`).
-
-Funktionen: zu Opening / Intro / Kapitel 1–6 / Finale springen, Foto für aktuelles Kapitel oder alle Fotos + Antworten simulieren, PDF testen (Finale → „Направите нашу успомену“), alles zurücksetzen.
-`?debug=false` blendet es in der Sitzung wieder aus.
-
-## 6. Testdaten zurücksetzen (vor Dienstag!)
-
-**Variante A – empfohlen (inkl. Fotos):** Trip-Link mit `?debug=true` auf einem Preview-Deployment oder lokal öffnen → DBG → „Reset alles“.
-Löscht Fortschritt, Antworten, Upload-Einträge **und** die Fotodateien im Storage sowie den lokalen Stand dieses Geräts.
-
-**Variante B – SQL (z. B. aus der Ferne):**
-```sql
-select public.admin_reset_trip('<token>');
-```
-Setzt Fortschritt/Antworten/Uploads zurück und entfernt alle Gerätezuordnungen. Danach im Dashboard
-**Storage → memories → Ordner `<trip_id>`** löschen. Auf Testgeräten zusätzlich Website-Daten löschen
-(oder Variante A nutzen), da der lokale Stand sonst beim nächsten Öffnen wieder hochgeladen wird.
-
-**Ganz frisch:** einfach mit `npm run trip:create` einen neuen Token erzeugen und den alten Trip in `public.trips` löschen.
-
-## 7. Cloudflare Pages
-
-1. Repo verbinden → Framework preset **Vite** (bzw. „None“)
-2. **Build command:** `npm run build`
-3. **Build output directory:** `dist`
-4. **Environment variables** (Production *und* Preview): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`; nur Preview: `VITE_ENABLE_DEBUG=true`
-5. Node-Version: ≥ 20.19 (z. B. `NODE_VERSION=22` setzen)
-
-SPA-Routing/Deep-Links: Cloudflare Pages liefert automatisch `index.html` für unbekannte Pfade, solange **keine `404.html`** existiert – deshalb gibt es bewusst kein `_redirects` (`/* /index.html 200` wird von Pages als Endlosschleife ignoriert).
-Header (noindex, CSP, Cache) kommen aus `public/_headers`. Bei einer eigenen Supabase-Domain die `connect-src` in der CSP anpassen.
-
-## 8. Qualität
-
+## Qualität
 ```bash
-npm run lint       # ESLint (typed rules)
-npm run typecheck  # tsc strict
-npm test           # Vitest: Fortschritts-Merge, Offline-Queue, i18n-Parität, PDF-Layout, Utils
-npm run build
+npm run lint && npm run typecheck && npm test && npm run build
 ```

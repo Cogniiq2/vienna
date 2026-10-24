@@ -5,11 +5,12 @@ import { useLanguage } from '../i18n/context';
 import { toRoman } from '../lib/format';
 import { useReducedMotion } from '../lib/hooks';
 import { useTripState } from '../state/context';
-import { ChallengeCard } from './ChallengeCard';
 import { ArrowIcon } from './Icons';
 import { ChapterInfo } from './InfoCards';
+import { MusicCard } from './MusicCard';
 import { PhotoCapture } from './PhotoCapture';
-import { MomentQuestion, WinnerQuestion } from './QuestionCard';
+import { Reveal } from './Reveal';
+import { StoryQuestion } from './StoryQuestion';
 import { TaskList } from './TaskList';
 
 const COMPLETE_DELAY = 900;
@@ -21,6 +22,10 @@ interface Props {
   onCompleted?: (id: ChapterId) => void;
 }
 
+/**
+ * Ein Kapitel als kleine Folge von Seiten: Überschrift → Geschichte → was zu tun ist → Erinnerung.
+ * Jede Seite bekommt Raum; Inhalte blenden beim Scrollen ruhig ein.
+ */
 export function ChapterView({ chapterId, mode, onCompleted }: Props) {
   const { t } = useLanguage();
   const { photos } = useTripState();
@@ -45,8 +50,9 @@ export function ChapterView({ chapterId, mode, onCompleted }: Props) {
   };
 
   return (
-    <article className="chapter" aria-labelledby={`chapter-${chapterId}`} data-chapter={chapterId}>
-      <header className="chapter__header">
+    <article className="chapter story" aria-labelledby={`chapter-${chapterId}`} data-chapter={chapterId}>
+      {/* 1 — Überschrift */}
+      <header className="story__screen story__screen--hero chapter__hero">
         <span className="chapter__numeral reveal-fade" aria-hidden="true">
           {roman}
         </span>
@@ -55,54 +61,145 @@ export function ChapterView({ chapterId, mode, onCompleted }: Props) {
           {time && <span className="chapter__time"> · {t.chapter.timeLabel(time)}</span>}
         </p>
         {c.reveal && (
-          <p className="chapter__reveal reveal-blur" style={delay(250)}>
+          <p className="chapter__reveal reveal-blur" style={delay(300)}>
             {c.reveal}
           </p>
         )}
-        <h1 id={`chapter-${chapterId}`} className="headline reveal-blur" style={delay(c.reveal ? 700 : 200)}>
+        <h1 id={`chapter-${chapterId}`} className="headline chapter__title reveal-blur" style={delay(c.reveal ? 900 : 250)}>
           {c.title}
         </h1>
-        <p className="serif-lead reveal" style={delay(c.reveal ? 1100 : 500)}>
-          {c.lead}
-        </p>
+        {c.subtitle && (
+          <p className="serif-lead chapter__subtitle reveal" style={delay(c.reveal ? 1400 : 700)}>
+            {c.subtitle}
+          </p>
+        )}
       </header>
 
-      <div className="chapter__body reveal" style={delay(c.reveal ? 1400 : 750)}>
-        {c.body.map((p) => (
-          <p key={p} className="body-text">
-            {p}
-          </p>
-        ))}
+      {/* 2 — Geschichte */}
+      {c.story.length > 0 && (
+        <div className="story__screen chapter__story">
+          {c.story.map((line, i) => (
+            <Reveal key={line} delay={i * 220}>
+              <p className="serif-lead">{line}</p>
+            </Reveal>
+          ))}
+          {c.storyClose && (
+            <Reveal delay={c.story.length * 220}>
+              <p className="chapter__close">{c.storyClose}</p>
+            </Reveal>
+          )}
+        </div>
+      )}
 
-        <TaskList tasks={c.tasks} style={def.taskStyle} />
-        {c.note && <p className="chapter__note small-text">{c.note}</p>}
+      {/* Wien in drei kleinen Geschichten */}
+      {c.facts && (
+        <div className="story__screen facts">
+          {c.facts.map((fact, i) => (
+            <Reveal key={fact.title} delay={i * 120}>
+              <div className="fact">
+                <span className="fact__index" aria-hidden="true">
+                  {String(i + 1).padStart(2, '0')}
+                </span>
+                <h2 className="fact__title">{fact.title}</h2>
+                <p className="body-text">{fact.text}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      )}
 
-        {def.info && <ChapterInfo kind={def.info} />}
-        {c.challenge && <ChallengeCard text={c.challenge} />}
+      {/* Die Regel beim Dinner */}
+      {c.rule && (
+        <div className="story__screen rule-reveal">
+          <Reveal>
+            <p className="serif-lead">{c.rule.intro}</p>
+          </Reveal>
+          <ul className="rule-reveal__items">
+            {c.rule.items.map((item, i) => (
+              <li key={item}>
+                <Reveal delay={200 + i * 260}>
+                  <span>{item}</span>
+                </Reveal>
+              </li>
+            ))}
+          </ul>
+          <Reveal delay={200 + c.rule.items.length * 260 + 300}>
+            <p className="hand rule-reveal__punchline">{c.rule.punchline}</p>
+          </Reveal>
+        </div>
+      )}
 
-        {def.questions.includes('tennis.winner.mother') && <WinnerQuestion />}
-        {def.questions.includes('dinner.moment') && <MomentQuestion />}
+      {/* 3 — Was zu tun ist */}
+      <div className="story__screen story__screen--flow">
+        {c.tasks.length > 0 && (
+          <Reveal>
+            <TaskList tasks={c.tasks} style={def.taskStyle} title={c.tasksTitle} />
+          </Reveal>
+        )}
+        {c.note && (
+          <Reveal>
+            <p className="note hand">{c.note}</p>
+          </Reveal>
+        )}
+        {c.toast && (
+          <Reveal>
+            <aside className="toast" aria-label={t.chapter.toast}>
+              <p className="eyebrow eyebrow--accent">{t.chapter.toast}</p>
+              <p className="toast__text">{c.toast}</p>
+            </aside>
+          </Reveal>
+        )}
+        {def.info && (
+          <Reveal>
+            <ChapterInfo kind={def.info} />
+          </Reveal>
+        )}
+        {c.challenge && (
+          <Reveal>
+            <aside className="challenge" aria-label={t.chapter.challenge}>
+              <p className="eyebrow eyebrow--accent">
+                {t.chapter.challenge} <span className="challenge__optional">· {t.common.optional}</span>
+              </p>
+              <p className="challenge__text hand">{c.challenge}</p>
+            </aside>
+          </Reveal>
+        )}
+        {def.music && <MusicCard slot={def.music} />}
+      </div>
 
-        <span className="rule rule--full" aria-hidden="true" />
+      {/* 4 — Fragen */}
+      {def.questions.length > 0 && (
+        <div className="story__screen questions">
+          {def.questions.map((q) => (
+            <Reveal key={q}>
+              <StoryQuestion id={q} />
+            </Reveal>
+          ))}
+        </div>
+      )}
 
-        <PhotoCapture
-          chapter={def}
-          title={c.title}
-          prompt={c.photo}
-          savedText={c.saved}
-          mode={mode}
-          onSaved={() => finish(true)}
-        />
+      {/* 5 — Erinnerung */}
+      <div className="story__screen story__screen--photo">
+        {def.photo && c.photo && (
+          <PhotoCapture
+            chapter={def}
+            title={c.title}
+            prompt={c.photo}
+            savedText={c.saved}
+            mode={mode}
+            onSaved={() => finish(true)}
+          />
+        )}
 
         {mode === 'current' && !finishing && !hasPhoto && (
           <div className="chapter__complete">
-            {def.photoRequired ? (
+            {def.photo && def.photoRequired ? (
               <button type="button" className="text-link text-link--quiet" onClick={() => finish(false)}>
                 {t.photo.skip}
               </button>
             ) : (
               <button type="button" className="btn btn--primary btn--large" onClick={() => finish(true)}>
-                <span>{c.completeCta}</span>
+                <span>{c.completeCta ?? t.common.next}</span>
                 <ArrowIcon size={18} />
               </button>
             )}

@@ -1,50 +1,140 @@
 /**
- * Struktur der sechs Kapitel. Texte stehen in src/content/{sr,de}.ts,
+ * Struktur der sechs Kapitel und der Memory Interludes dazwischen.
+ * Texte stehen in src/content/{sr,de}.ts, Persönliches in src/config/family.ts,
  * Reisedaten in src/config/trip.ts. Hier nur Ablauf & Verhalten.
  */
 
-export const CHAPTER_IDS = ['morning', 'mission', 'tennis', 'pause', 'spa', 'dinner'] as const;
+export const CHAPTER_IDS = ['morning', 'mission', 'vienna', 'tennis', 'spa', 'dinner'] as const;
 export type ChapterId = (typeof CHAPTER_IDS)[number];
 
-export const QUESTION_IDS = ['tennis.winner.mother', 'tennis.winner.father', 'dinner.moment'] as const;
+export const INTERLUDE_IDS = ['gradskiKlub', 'wedding', 'family', 'work'] as const;
+export type InterludeId = (typeof INTERLUDE_IDS)[number];
+
+/** Linearer Ablauf des Tages: Erinnerung → Aktivität → Erinnerung → … */
+export type StoryStep = { kind: 'interlude'; id: InterludeId } | { kind: 'chapter'; id: ChapterId };
+
+export const STORY: readonly StoryStep[] = [
+  { kind: 'interlude', id: 'gradskiKlub' },
+  { kind: 'chapter', id: 'morning' },
+  { kind: 'interlude', id: 'wedding' },
+  { kind: 'chapter', id: 'mission' },
+  { kind: 'interlude', id: 'family' },
+  { kind: 'chapter', id: 'vienna' },
+  { kind: 'chapter', id: 'tennis' },
+  { kind: 'interlude', id: 'work' },
+  { kind: 'chapter', id: 'spa' },
+  { kind: 'chapter', id: 'dinner' },
+];
+
+/** Stationen nach dem letzten Kapitel. */
+export const FINALE_STAGES = ['more', 'messages', 'bonus'] as const;
+export type FinaleStage = (typeof FINALE_STAGES)[number];
+
+export const QUESTION_IDS = [
+  'morning.firstAwake',
+  'morning.noWork',
+  'tennis.mother.favorite',
+  'tennis.father.food',
+  'spa.lastDay',
+  'dinner.still',
+  'dinner.moment',
+  'dinner.repeat',
+  'epilogue.takeaway',
+] as const;
 export type QuestionId = (typeof QUESTION_IDS)[number];
 
-export type InfoCardKind = 'ticket' | 'restaurant' | 'hotel' | 'hotel-gym' | 'hotel-spa';
+export type QuestionKind = { type: 'choice'; options: readonly string[] } | { type: 'text'; multiline: boolean };
+
+/** Art der Frage. Die Optionen sind stabile Schlüssel; die Beschriftung kommt aus den Texten. */
+export const QUESTIONS: Record<QuestionId, QuestionKind> = {
+  'morning.firstAwake': { type: 'choice', options: ['mother', 'father'] },
+  'morning.noWork': { type: 'choice', options: ['10', '30', 'try'] },
+  'tennis.mother.favorite': { type: 'text', multiline: false },
+  'tennis.father.food': { type: 'choice', options: ['30', 'set', 'asked'] },
+  'spa.lastDay': { type: 'text', multiline: true },
+  'dinner.still': { type: 'text', multiline: true },
+  'dinner.moment': { type: 'text', multiline: true },
+  'dinner.repeat': { type: 'text', multiline: true },
+  'epilogue.takeaway': { type: 'text', multiline: true },
+};
+
+export type InfoCardKind = 'ticket' | 'restaurant' | 'hotel-gym' | 'hotel-spa' | 'route';
+export type MusicSlot = 'morning' | 'spa' | 'finale';
 
 export interface ChapterDefinition {
   id: ChapterId;
-  /** Muss ein Foto gemacht werden, damit das Kapitel abgeschlossen wird? */
+  /** Wird ein Foto erwartet? (Es gibt immer einen dezenten Ausweg.) */
   photoRequired: boolean;
+  /** Gibt es überhaupt eine Foto-Station? */
+  photo: boolean;
   /** Kamera-Hinweis für Mobilgeräte: Selfie = Frontkamera. */
   capture: 'user' | 'environment';
-  /** Praktische Info-Karte (Tickets, Restaurant …). */
   info: InfoCardKind | null;
-  /** Fragen, deren Antworten im PDF landen. */
   questions: readonly QuestionId[];
-  /** Darstellung der Aufgabenliste: nummerierte Schritte oder ruhige Liste. */
   taskStyle: 'steps' | 'ritual' | 'plain';
+  music: MusicSlot | null;
 }
 
 export const CHAPTERS: readonly ChapterDefinition[] = [
-  { id: 'morning', photoRequired: true, capture: 'user', info: null, questions: [], taskStyle: 'plain' },
-  { id: 'mission', photoRequired: true, capture: 'user', info: 'hotel-gym', questions: [], taskStyle: 'steps' },
+  {
+    id: 'morning',
+    photoRequired: true,
+    photo: true,
+    capture: 'user',
+    info: null,
+    questions: ['morning.firstAwake', 'morning.noWork'],
+    taskStyle: 'plain',
+    music: 'morning',
+  },
+  {
+    id: 'mission',
+    photoRequired: true,
+    photo: true,
+    capture: 'user',
+    info: 'hotel-gym',
+    questions: [],
+    taskStyle: 'steps',
+    music: null,
+  },
+  {
+    id: 'vienna',
+    photoRequired: false,
+    photo: false,
+    capture: 'environment',
+    info: 'route',
+    questions: [],
+    taskStyle: 'plain',
+    music: null,
+  },
   {
     id: 'tennis',
     photoRequired: true,
+    photo: true,
     capture: 'user',
     info: 'ticket',
-    questions: ['tennis.winner.mother', 'tennis.winner.father'],
+    questions: ['tennis.mother.favorite', 'tennis.father.food'],
     taskStyle: 'plain',
+    music: null,
   },
-  { id: 'pause', photoRequired: false, capture: 'environment', info: 'hotel', questions: [], taskStyle: 'plain' },
-  { id: 'spa', photoRequired: true, capture: 'user', info: 'hotel-spa', questions: [], taskStyle: 'ritual' },
+  {
+    id: 'spa',
+    photoRequired: true,
+    photo: true,
+    capture: 'user',
+    info: 'hotel-spa',
+    questions: ['spa.lastDay'],
+    taskStyle: 'ritual',
+    music: 'spa',
+  },
   {
     id: 'dinner',
     photoRequired: true,
+    photo: true,
     capture: 'environment',
     info: 'restaurant',
-    questions: ['dinner.moment'],
+    questions: ['dinner.still', 'dinner.moment', 'dinner.repeat'],
     taskStyle: 'plain',
+    music: null,
   },
 ];
 
@@ -67,3 +157,10 @@ export function isChapterId(value: unknown): value is ChapterId {
 export function isQuestionId(value: unknown): value is QuestionId {
   return typeof value === 'string' && (QUESTION_IDS as readonly string[]).includes(value);
 }
+
+/** Schlüssel, unter dem ein gesehenes Interlude / eine Finale-Station im Fortschritt vermerkt wird. */
+export const seenKey = {
+  interlude: (id: InterludeId) => `interlude:${id}`,
+  finale: (stage: FinaleStage) => `finale:${stage}`,
+  epilogue: 'epilogue:done',
+} as const;
