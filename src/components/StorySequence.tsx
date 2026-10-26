@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { family } from '../config/family';
+import { MOTIF } from '../content';
 import type { StoryFrame } from '../content';
 import { useLanguage } from '../i18n/context';
 import { visibleFrames } from '../lib/frames';
@@ -65,7 +66,7 @@ export function StorySequence({ frames, onDone, doneLabel, eyebrow, immersive = 
         {page.lines.length > 0 && (
           <div className="sequence__text" aria-live="polite">
             {page.lines.map((line) => (
-              <p key={line} className="sequence__line">
+              <p key={line} className="sequence__line" data-motif={line === MOTIF ? 'true' : undefined}>
                 {line}
               </p>
             ))}

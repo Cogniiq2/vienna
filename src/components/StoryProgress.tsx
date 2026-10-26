@@ -2,7 +2,6 @@ import { CHAPTER_IDS, type ChapterId } from '../config/chapters';
 import { useLanguage } from '../i18n/context';
 import { toRoman } from '../lib/format';
 import type { TripProgress } from '../lib/progress';
-import { CheckIcon } from './Icons';
 
 interface Props {
   progress: TripProgress;
@@ -11,7 +10,7 @@ interface Props {
   onSelect: (id: ChapterId | null) => void;
 }
 
-/** Sechs ruhige Marker. Abgeschlossene Kapitel lassen sich erneut ansehen. */
+/** Das Inhaltsverzeichnis des Tages (I–V). Abgeschlossene Kapitel lassen sich erneut aufschlagen. */
 export function StoryProgress({ progress, currentIndex, viewing, onSelect }: Props) {
   const { t } = useLanguage();
   const total = CHAPTER_IDS.length;
@@ -42,8 +41,8 @@ export function StoryProgress({ progress, currentIndex, viewing, onSelect }: Pro
                 disabled={!done && !current}
                 onClick={() => onSelect(done && !current ? id : null)}
               >
-                <span className="progress__dot" aria-hidden="true">
-                  {done && <CheckIcon size={11} strokeWidth={1.8} />}
+                <span className="progress__numeral" aria-hidden="true">
+                  {toRoman(index + 1)}
                 </span>
               </button>
             </li>

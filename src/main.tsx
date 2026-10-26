@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import '@fontsource/cormorant-garamond/300.css';
 import '@fontsource/cormorant-garamond/400.css';
 import '@fontsource/cormorant-garamond/500.css';
+import '@fontsource/cormorant-garamond/400-italic.css';
 import '@fontsource-variable/manrope/index.css';
 import '@fontsource/caveat/400.css';
 import './styles/base.css';

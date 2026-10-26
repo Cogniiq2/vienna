@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ChapterDefinition } from '../config/chapters';
+import { chapterIndex, type ChapterDefinition } from '../config/chapters';
+import { trip } from '../config/trip';
 import { useLanguage } from '../i18n/context';
+import { formatClock, toRoman } from '../lib/format';
 import { useOnline, usePhotoUrl } from '../lib/hooks';
 import { ImageError, processPhoto, type ProcessedImage } from '../lib/image';
 import { useTripState, useTripStore } from '../state/context';
@@ -55,6 +57,21 @@ export function SyncStatus({ entry }: { entry: PhotoEntry }) {
       <span className="sync-status__dot" aria-hidden="true" />
       {text}
     </p>
+  );
+}
+
+/** Bildunterschrift wie im Bildband – nur aus vorhandenen Daten: Kapitel, Ort des Tages, Aufnahmezeit. */
+function PlateCaption({ chapter, capturedAt }: { chapter: ChapterDefinition; capturedAt?: string }) {
+  const { t } = useLanguage();
+  const time = capturedAt ? formatClock(capturedAt, trip.timeZone) : null;
+  return (
+    <figcaption className="photo__caption">
+      <span className="photo__caption-mark">{t.chapter.label(toRoman(chapterIndex(chapter.id) + 1))}</span>
+      <span>
+        {t.chapters[chapter.id].eyebrow}
+        {time && ` · ${time}`}
+      </span>
+    </figcaption>
   );
 }
 
@@ -168,8 +185,10 @@ export function PhotoCapture({ chapter, title, prompt, savedText, mode, onSaved 
     return (
       <section className="photo" aria-label={t.photo.heading}>
         {inputs}
-        <figure className="photo__frame reveal-fade">
-          <img src={step.url} alt={t.photo.previewAlt(title)} />
+        <figure className="photo__plate photo__plate--preview" data-busy={busy ? 'true' : 'false'}>
+          <div className="photo__frame reveal-fade">
+            <img src={step.url} alt={t.photo.previewAlt(title)} />
+          </div>
         </figure>
         {errorMessage}
         <div className="photo__actions">
@@ -189,8 +208,11 @@ export function PhotoCapture({ chapter, title, prompt, savedText, mode, onSaved 
     return (
       <section className="photo" aria-label={t.photo.heading}>
         {saved.url && (
-          <figure className="photo__frame">
-            <img src={saved.url} alt={t.photo.savedAlt(title)} />
+          <figure className="photo__plate">
+            <div className="photo__frame photo__frame--placed">
+              <img src={saved.url} alt={t.photo.savedAlt(title)} />
+            </div>
+            <PlateCaption chapter={chapter} capturedAt={entry?.capturedAt} />
           </figure>
         )}
         <div className="saved-moment" role="status" aria-live="polite">
@@ -211,12 +233,15 @@ export function PhotoCapture({ chapter, title, prompt, savedText, mode, onSaved 
     return (
       <section className="photo" aria-label={t.photo.heading}>
         {inputs}
-        <figure className="photo__frame" data-loading={saved.loading ? 'true' : undefined}>
-          {saved.url ? (
-            <img src={saved.url} alt={t.photo.savedAlt(title)} />
-          ) : (
-            <figcaption className="photo__placeholder small-text">{saved.loading ? t.photo.loading : t.photo.synced}</figcaption>
-          )}
+        <figure className="photo__plate">
+          <div className="photo__frame" data-loading={saved.loading ? 'true' : undefined}>
+            {saved.url ? (
+              <img src={saved.url} alt={t.photo.savedAlt(title)} />
+            ) : (
+              <span className="photo__placeholder small-text">{saved.loading ? t.photo.loading : t.photo.synced}</span>
+            )}
+          </div>
+          {saved.url && <PlateCaption chapter={chapter} capturedAt={entry.capturedAt} />}
         </figure>
         <SyncStatus entry={entry} />
         {errorMessage}
@@ -249,9 +274,14 @@ export function PhotoCapture({ chapter, title, prompt, savedText, mode, onSaved 
       </div>
 
       <figure className="photo__frame photo__frame--empty" aria-hidden="true">
-        <span className="photo__corner photo__corner--tl" />
-        <span className="photo__corner photo__corner--br" />
-        {step.kind === 'processing' ? <span className="loader-line" /> : <CameraIcon size={28} />}
+        <span className="photo__empty-numeral">{toRoman(chapterIndex(chapter.id) + 1)}</span>
+        {step.kind === 'processing' ? (
+          <span className="loader-line" />
+        ) : (
+          <span className="photo__empty-icon">
+            <CameraIcon size={20} />
+          </span>
+        )}
       </figure>
 
       {errorMessage}

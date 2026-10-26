@@ -23,8 +23,8 @@ interface Props {
 }
 
 /**
- * Ein Kapitel als kleine Folge von Seiten: Überschrift → Geschichte → was zu tun ist → Erinnerung.
- * Jede Seite bekommt Raum; Inhalte blenden beim Scrollen ruhig ein.
+ * Ein Kapitel als eine Buchseite: Auftakt → Geschichte → was zu tun ist → Fragen → Foto als Tafel.
+ * Im Rückblick steht das eigene Foto direkt nach dem Auftakt. Inhalte blenden beim Scrollen ruhig ein.
  */
 export function ChapterView({ chapterId, mode, onCompleted }: Props) {
   const { t } = useLanguage();
@@ -49,8 +49,52 @@ export function ChapterView({ chapterId, mode, onCompleted }: Props) {
     timer.current = setTimeout(() => onCompleted?.(chapterId), withMoment && !reduced ? COMPLETE_DELAY : 0);
   };
 
+  // Im Rückblick wird das eigene Foto zur Tafel direkt unter dem Auftakt.
+  const photoFirst = mode === 'review' && hasPhoto;
+  const photoBlock = (
+    <div className="story__screen story__screen--photo">
+      {def.photo && c.photo && (
+        <PhotoCapture
+          chapter={def}
+          title={c.title}
+          prompt={c.photo}
+          savedText={c.saved}
+          mode={mode}
+          onSaved={() => finish(true)}
+        />
+      )}
+
+      {mode === 'current' && !finishing && !hasPhoto && (
+        <div className="chapter__complete">
+          {def.photo && def.photoRequired ? (
+            <button type="button" className="text-link text-link--quiet" onClick={() => finish(false)}>
+              {t.photo.skip}
+            </button>
+          ) : (
+            <button type="button" className="btn btn--primary btn--large" onClick={() => finish(true)}>
+              <span>{c.completeCta ?? t.common.next}</span>
+              <ArrowIcon size={18} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {mode === 'current' && finishing && !hasPhoto && (
+        <div className="saved-moment" role="status" aria-live="polite">
+          <p className="serif-quote">{c.saved}</p>
+        </div>
+      )}
+    </div>
+  );
+
   return (
-    <article className="chapter story" aria-labelledby={`chapter-${chapterId}`} data-chapter={chapterId}>
+    <article
+      className="chapter story"
+      aria-labelledby={`chapter-${chapterId}`}
+      data-chapter={chapterId}
+      data-mode={mode}
+      data-photo={hasPhoto ? 'true' : 'false'}
+    >
       {/* 1 — Überschrift */}
       <header className="story__screen story__screen--hero chapter__hero">
         <span className="chapter__numeral reveal-fade" aria-hidden="true">
@@ -74,6 +118,8 @@ export function ChapterView({ chapterId, mode, onCompleted }: Props) {
           </p>
         )}
       </header>
+
+      {photoFirst && photoBlock}
 
       {/* 2 — Geschichte */}
       {c.story.length > 0 && (
@@ -161,40 +207,8 @@ export function ChapterView({ chapterId, mode, onCompleted }: Props) {
         </div>
       )}
 
-      {/* 5 — Erinnerung */}
-      <div className="story__screen story__screen--photo">
-        {def.photo && c.photo && (
-          <PhotoCapture
-            chapter={def}
-            title={c.title}
-            prompt={c.photo}
-            savedText={c.saved}
-            mode={mode}
-            onSaved={() => finish(true)}
-          />
-        )}
-
-        {mode === 'current' && !finishing && !hasPhoto && (
-          <div className="chapter__complete">
-            {def.photo && def.photoRequired ? (
-              <button type="button" className="text-link text-link--quiet" onClick={() => finish(false)}>
-                {t.photo.skip}
-              </button>
-            ) : (
-              <button type="button" className="btn btn--primary btn--large" onClick={() => finish(true)}>
-                <span>{c.completeCta ?? t.common.next}</span>
-                <ArrowIcon size={18} />
-              </button>
-            )}
-          </div>
-        )}
-
-        {mode === 'current' && finishing && !hasPhoto && (
-          <div className="saved-moment" role="status" aria-live="polite">
-            <p className="serif-quote">{c.saved}</p>
-          </div>
-        )}
-      </div>
+      {/* 5 — Erinnerung (im Rückblick bereits oben) */}
+      {!photoFirst && photoBlock}
     </article>
   );
 }
