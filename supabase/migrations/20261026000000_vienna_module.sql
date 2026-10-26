@@ -1,24 +1,25 @@
 -- =============================================================================
 -- VIENNA GIFT – isoliertes Modul für ein bestehendes (All-in-One) Supabase-Projekt
+-- Version 2: OHNE Supabase Auth für die Eltern (keine Anonymous Sign-ins nötig).
+--
+-- ZUGRIFFSMODELL
+--   Eltern:  kein Login. Jeder Aufruf trägt den geheimen Trip-Token (192 Bit) + eine lokale
+--            Geräte-ID. Jede Vienna-Funktion prüft den Token selbst (nur SHA-256-Hash in der DB).
+--            Fotos laufen ausschließlich über die Edge Function `vienna-media`, die mit dem
+--            Service-Role-Key serverseitig signierte Upload-/Lese-URLs für Vienna-Pfade ausstellt.
+--   Admin:   normaler Supabase-E-Mail-Login + Eintrag in vienna.admins.
 --
 -- GRUNDSÄTZE
---   * Rein ADDITIV. Es wird kein bestehendes Objekt verändert, gelöscht oder überschrieben.
---   * Alles Vienna-Eigene lebt im neuen Schema `vienna`.
---     Nur die API-Funktionen (RPC) liegen – technisch nötig, weil PostgREST nur `public`
---     ausliefert – in `public`, ausnahmslos mit Präfix `vienna_`.
---   * Eigener privater Storage-Bucket `vienna-memories`. Kein bestehender Bucket wird berührt.
---   * Storage-Policies sind permissiv-additiv und gelten ausschließlich für bucket_id = 'vienna-memories'.
---   * Realtime: Vienna-Tabellen werden der Publication `supabase_realtime` nur HINZUGEFÜGT.
---   * Keine Extensions (sha256 / gen_random_uuid sind Postgres-Bordmittel).
---   * Keine globalen GRANT/REVOKE. Rechte werden nur auf Vienna-eigenen Objekten gesetzt.
---   * Keine Trigger. Kein DROP … CASCADE.
+--   * Rein ADDITIV. Kein bestehendes Objekt wird verändert, gelöscht oder überschrieben.
+--   * Alles Vienna-Eigene im Schema `vienna`; API-Funktionen in `public` nur mit Präfix `vienna_`.
+--   * Eigene private Buckets `vienna-day` (Tagesfotos) und `vienna-memories` (Familien-Assets).
+--   * Storage-Policies nur für diese Buckets und nur für Vienna-Admins.
+--   * Realtime: Vienna-Tabellen werden der Publication nur HINZUGEFÜGT.
+--   * Keine Extensions, keine Trigger, kein DROP … CASCADE auf fremden Strukturen,
+--     keine globalen GRANT/REVOKE, keine Default Privileges, keine Auth-Einstellungen.
 --
--- KOLLISIONSSCHUTZ
---   Vor jeder Änderung prüft ein Guard, ob es Objekte mit Vienna-Namen gibt, die NICHT von
---   diesem Modul stammen (Markierung per COMMENT 'vienna-gift module'). Falls ja: Abbruch
---   mit Fehlermeldung, die ganze Transaktion wird zurückgerollt – nichts wird verändert.
---
--- Wiederholtes Ausführen (z. B. nach einem Update dieses Skripts) ist sicher.
+-- KOLLISIONSSCHUTZ: siehe Abschnitt 0. Bei fremden Objekten mit Vienna-Namen → Abbruch + Rollback.
+-- Wiederholtes Ausführen ist sicher.
 -- =============================================================================
 
 begin;
@@ -38,25 +39,21 @@ begin
     raise exception 'Abbruch: Schema "vienna" existiert bereits und gehört nicht zu Vienna Gift. Nichts wurde verändert.';
   end if;
 
-  -- Fremde Funktionen mit vienna_-Präfix in public?
-  select string_agg(p.oid::regprocedure::text, ', ')
-    into v_conflicts
+  select string_agg(p.oid::regprocedure::text, ', ') into v_conflicts
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'public'
-     and p.proname like 'vienna\_%'
+   where n.nspname = 'public' and p.proname like 'vienna\_%'
      and coalesce(obj_description(p.oid, 'pg_proc'), '') <> v_marker;
   if v_conflicts is not null then
     raise exception 'Abbruch: Fremde Funktionen mit Präfix vienna_ gefunden: %. Nichts wurde verändert.', v_conflicts;
   end if;
 
-  -- Bei Erstinstallation dürfen Bucket und Policy-Namen noch nicht existieren.
   if not v_schema then
-    if exists (select 1 from storage.buckets where id = 'vienna-memories') then
-      raise exception 'Abbruch: Bucket "vienna-memories" existiert bereits (nicht von Vienna Gift). Nichts wurde verändert.';
+    select string_agg(id, ', ') into v_conflicts from storage.buckets where id in ('vienna-day', 'vienna-memories');
+    if v_conflicts is not null then
+      raise exception 'Abbruch: Bucket(s) % existieren bereits (nicht von Vienna Gift). Nichts wurde verändert.', v_conflicts;
     end if;
     select string_agg(policyname, ', ') into v_conflicts
-      from pg_policies
-     where schemaname = 'storage' and tablename = 'objects' and policyname like 'vienna\_%';
+      from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname like 'vienna\_%';
     if v_conflicts is not null then
       raise exception 'Abbruch: Storage-Policies mit Vienna-Namen existieren bereits: %. Nichts wurde verändert.', v_conflicts;
     end if;
@@ -65,14 +62,42 @@ end
 $guard$;
 
 -- -----------------------------------------------------------------------------
+-- 0b. Upgrade eines früheren Vienna-Entwurfs (nur eigene, markierte Objekte)
+-- -----------------------------------------------------------------------------
+do $upgrade$
+declare
+  v_fn regprocedure;
+begin
+  if exists (select 1 from pg_namespace where nspname = 'vienna') then
+    -- Alte Funktionssignaturen (mit Supabase-Session) entfernen – nur Vienna-markierte.
+    for v_fn in
+      select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname like 'vienna\_%'
+         and obj_description(p.oid, 'pg_proc') = 'vienna-gift module'
+    loop
+      execute format('drop function %s', v_fn);
+    end loop;
+    drop policy if exists vienna_memories_read       on storage.objects;
+    drop policy if exists vienna_memories_day_insert on storage.objects;
+    drop policy if exists vienna_memories_day_delete on storage.objects;
+    if exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'vienna' and tablename = 'trip_members') then
+      alter publication supabase_realtime drop table vienna.trip_members;
+    end if;
+    drop table if exists vienna.trip_members;
+    drop function if exists vienna.is_trip_member(uuid);
+    drop function if exists vienna.is_trip_member_folder(text);
+    drop function if exists vienna.assert_member(uuid);
+    drop function if exists vienna.touch_member(uuid);
+  end if;
+end
+$upgrade$;
+
+-- -----------------------------------------------------------------------------
 -- 1. Schema
 -- -----------------------------------------------------------------------------
 create schema if not exists vienna;
 comment on schema vienna is 'vienna-gift module';
-
--- Nur angemeldete Sessions (auch anonyme) dürfen das Schema „sehen“ – nötig für
--- RLS-Hilfsfunktionen in Storage-Policies und für Realtime im Admin-Dashboard.
--- Das Schema wird NICHT über die REST-API exponiert.
+-- Nur für den Admin (permanenter E-Mail-User): RLS-Hilfsfunktionen und Realtime. Nicht über die REST-API exponiert.
 grant usage on schema vienna to authenticated;
 
 -- -----------------------------------------------------------------------------
@@ -96,15 +121,18 @@ create table if not exists vienna.trips (
   constraint vienna_trips_token_hash_key unique (token_hash)
 );
 
-create table if not exists vienna.trip_members (
+-- Zeitpunkt des letzten Test-Resets: Geräte mit älterem lokalen Stand verwerfen diesen (statt ihn zurückzuspielen).
+alter table vienna.trips add column if not exists reset_at timestamptz;
+
+-- Geräte der Eltern: zufällige, lokal gespeicherte ID – kein Auth-User.
+create table if not exists vienna.devices (
   trip_id      uuid not null references vienna.trips (id) on delete cascade,
-  user_id      uuid not null references auth.users (id) on delete cascade,
-  device       text,
+  device_id    uuid not null,
+  label        text constraint vienna_devices_label_check check (char_length(label) <= 80),
   joined_at    timestamptz not null default now(),
-  last_seen_at timestamptz,
-  constraint vienna_trip_members_pkey primary key (trip_id, user_id)
+  last_seen_at timestamptz not null default now(),
+  constraint vienna_devices_pkey primary key (trip_id, device_id)
 );
-create index if not exists vienna_trip_members_user_idx on vienna.trip_members (user_id);
 
 create table if not exists vienna.uploads (
   id           uuid primary key default gen_random_uuid(),
@@ -116,6 +144,17 @@ create table if not exists vienna.uploads (
   uploaded_at  timestamptz not null default now(),
   constraint vienna_uploads_trip_chapter_key unique (trip_id, chapter_id)
 );
+
+-- Vom Server ausgestellte Upload-Berechtigungen. Pfade entstehen NUR hier, nie im Client.
+create table if not exists vienna.upload_tickets (
+  path       text primary key,
+  trip_id    uuid not null references vienna.trips (id) on delete cascade,
+  device_id  uuid not null,
+  chapter_id text not null,
+  issued_at  timestamptz not null default now(),
+  used_at    timestamptz
+);
+create index if not exists vienna_upload_tickets_trip_idx on vienna.upload_tickets (trip_id, issued_at);
 
 create table if not exists vienna.answers (
   trip_id     uuid not null references vienna.trips (id) on delete cascade,
@@ -136,7 +175,6 @@ create table if not exists vienna.messages (
 );
 create index if not exists vienna_messages_trip_idx on vienna.messages (trip_id, created_at);
 
--- Familien-Assets inkl. optionaler Metadaten. storage_path null = nur Metadaten, noch keine Datei.
 create table if not exists vienna.assets (
   trip_id      uuid not null references vienna.trips (id) on delete cascade,
   slot         text not null constraint vienna_assets_slot_check check (slot in (
@@ -153,30 +191,30 @@ create table if not exists vienna.assets (
   constraint vienna_assets_pkey primary key (trip_id, slot)
 );
 
--- Vienna-eigene Admin-Liste (unabhängig von anderen Apps im Projekt).
 create table if not exists vienna.admins (
   email      text primary key constraint vienna_admins_email_check check (email = lower(email)),
   created_at timestamptz not null default now()
 );
 
-alter table vienna.trips        enable row level security;
-alter table vienna.trip_members enable row level security;
-alter table vienna.uploads      enable row level security;
-alter table vienna.answers      enable row level security;
-alter table vienna.messages     enable row level security;
-alter table vienna.assets       enable row level security;
-alter table vienna.admins       enable row level security;
+alter table vienna.trips          enable row level security;
+alter table vienna.devices        enable row level security;
+alter table vienna.uploads        enable row level security;
+alter table vienna.upload_tickets enable row level security;
+alter table vienna.answers        enable row level security;
+alter table vienna.messages       enable row level security;
+alter table vienna.assets         enable row level security;
+alter table vienna.admins         enable row level security;
 
--- Nur Vienna-eigene Tabellen: kein direkter Zugriff für Clients (Ausnahme unten: Admin-SELECT per RLS).
 revoke all on all tables in schema vienna from public, anon, authenticated;
 
-comment on table vienna.trips        is 'vienna-gift module';
-comment on table vienna.trip_members is 'vienna-gift module';
-comment on table vienna.uploads      is 'vienna-gift module';
-comment on table vienna.answers      is 'vienna-gift module';
-comment on table vienna.messages     is 'vienna-gift module';
-comment on table vienna.assets       is 'vienna-gift module';
-comment on table vienna.admins       is 'vienna-gift module';
+comment on table vienna.trips          is 'vienna-gift module';
+comment on table vienna.devices        is 'vienna-gift module';
+comment on table vienna.uploads        is 'vienna-gift module';
+comment on table vienna.upload_tickets is 'vienna-gift module';
+comment on table vienna.answers        is 'vienna-gift module';
+comment on table vienna.messages       is 'vienna-gift module';
+comment on table vienna.assets         is 'vienna-gift module';
+comment on table vienna.admins         is 'vienna-gift module';
 
 -- -----------------------------------------------------------------------------
 -- 3. Interne Hilfsfunktionen (Schema vienna, nicht über die API erreichbar)
@@ -193,17 +231,27 @@ create or replace function vienna.hash_token(p_token text)
 returns text language sql immutable set search_path = ''
 as $$ select encode(pg_catalog.sha256(convert_to(p_token, 'UTF8')), 'hex') $$;
 
-create or replace function vienna.is_trip_member(p_trip_id uuid)
-returns boolean language sql stable security definer set search_path = ''
+-- Löst Token → Trip auf und registriert/aktualisiert das Gerät.
+-- Ungültig/fehlend/falsches Format → immer dieselbe Meldung, keinerlei Metadaten.
+create or replace function vienna.require_trip(p_token text, p_device_id uuid, p_label text default null)
+returns uuid language plpgsql volatile security definer set search_path = ''
 as $$
-  select exists (select 1 from vienna.trip_members m where m.trip_id = p_trip_id and m.user_id = auth.uid())
-$$;
-
--- Für Storage-Policies: Ordnername (Text), damit ungültige Pfade keine Cast-Fehler auslösen.
-create or replace function vienna.is_trip_member_folder(p_folder text)
-returns boolean language sql stable security definer set search_path = ''
-as $$
-  select exists (select 1 from vienna.trip_members m where m.trip_id::text = p_folder and m.user_id = auth.uid())
+declare
+  v_trip_id uuid;
+begin
+  if p_token is null or p_token !~ '^[A-Za-z0-9_-]{24,128}$' or p_device_id is null then
+    raise exception 'invalid_token' using errcode = 'P0001';
+  end if;
+  select t.id into v_trip_id from vienna.trips t where t.token_hash = vienna.hash_token(p_token);
+  if v_trip_id is null then
+    raise exception 'invalid_token' using errcode = 'P0001';
+  end if;
+  insert into vienna.devices (trip_id, device_id, label, last_seen_at)
+  values (v_trip_id, p_device_id, left(p_label, 80), now())
+  on conflict (trip_id, device_id) do update
+    set last_seen_at = now(), label = coalesce(left(excluded.label, 80), vienna.devices.label);
+  return v_trip_id;
+end;
 $$;
 
 create or replace function vienna.is_admin()
@@ -212,16 +260,6 @@ as $$
   select auth.uid() is not null
      and coalesce((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
      and exists (select 1 from vienna.admins a where a.email = lower(coalesce(auth.jwt() ->> 'email', '')))
-$$;
-
-create or replace function vienna.assert_member(p_trip_id uuid)
-returns void language plpgsql stable security definer set search_path = ''
-as $$
-begin
-  if auth.uid() is null or not vienna.is_trip_member(p_trip_id) then
-    raise exception 'forbidden' using errcode = '42501';
-  end if;
-end;
 $$;
 
 create or replace function vienna.assert_admin()
@@ -234,19 +272,13 @@ begin
 end;
 $$;
 
-create or replace function vienna.touch_member(p_trip_id uuid)
-returns void language sql volatile security definer set search_path = ''
-as $$
-  update vienna.trip_members set last_seen_at = now() where trip_id = p_trip_id and user_id = auth.uid()
-$$;
-
 create or replace function vienna.trip_snapshot(p_trip_id uuid)
 returns jsonb language sql stable security definer set search_path = ''
 as $$
   select jsonb_build_object(
     'trip_id', t.id, 'phase', t.phase, 'completed', to_jsonb(t.completed_chapters), 'seen', to_jsonb(t.seen),
     'current_chapter', t.current_chapter, 'language', t.language,
-    'started_at', t.started_at, 'finished_at', t.finished_at, 'updated_at', t.updated_at,
+    'started_at', t.started_at, 'finished_at', t.finished_at, 'updated_at', t.updated_at, 'reset_at', t.reset_at,
     'uploads', coalesce((
       select jsonb_agg(jsonb_build_object('chapter_id', u.chapter_id, 'path', u.storage_path,
                                           'captured_at', u.captured_at, 'uploaded_at', u.uploaded_at) order by u.uploaded_at)
@@ -269,52 +301,34 @@ as $$
 $$;
 
 revoke all on all functions in schema vienna from public, anon, authenticated;
--- Von Storage-/RLS-Policies im Kontext der angemeldeten Session benötigt:
-grant execute on function vienna.is_trip_member_folder(text) to authenticated;
-grant execute on function vienna.is_admin() to authenticated;
+grant execute on function vienna.is_admin() to authenticated;   -- für Admin-RLS & Storage-Policies
 
 -- -----------------------------------------------------------------------------
--- 4. API für die Eltern-App (public, Präfix vienna_, SECURITY DEFINER + Prüfung)
+-- 4. Eltern-API: Token + Geräte-ID, kein Login (Grant an anon/authenticated)
+--    Die Eltern-Snapshots enthalten keine Trip-ID.
 -- -----------------------------------------------------------------------------
-create or replace function public.vienna_join_trip(p_token text, p_device text default null)
+create or replace function public.vienna_join_trip(p_token text, p_device_id uuid, p_device text default null)
 returns jsonb language plpgsql volatile security definer set search_path = ''
 as $$
-declare
-  v_trip_id uuid;
 begin
-  if auth.uid() is null then
-    raise exception 'not_authenticated' using errcode = '42501';
-  end if;
-  if p_token is null or char_length(p_token) < 24 or char_length(p_token) > 128 then
-    raise exception 'invalid_token' using errcode = 'P0001';
-  end if;
-  select t.id into v_trip_id from vienna.trips t where t.token_hash = vienna.hash_token(p_token);
-  if v_trip_id is null then
-    raise exception 'invalid_token' using errcode = 'P0001';
-  end if;
-  insert into vienna.trip_members (trip_id, user_id, device, last_seen_at)
-  values (v_trip_id, auth.uid(), left(p_device, 80), now())
-  on conflict (trip_id, user_id) do update
-    set last_seen_at = now(), device = coalesce(left(excluded.device, 80), vienna.trip_members.device);
-  return vienna.trip_snapshot(v_trip_id);
+  return vienna.trip_snapshot(vienna.require_trip(p_token, p_device_id, p_device)) - 'trip_id';
 end;
 $$;
 
 -- Monotones Zusammenführen: Kapitel/Seiten nur hinzufügen, Phasen nur vorwärts (zwei Handys).
 create or replace function public.vienna_save_progress(
-  p_trip_id uuid, p_phase text, p_completed text[], p_seen text[],
+  p_token text, p_device_id uuid, p_phase text, p_completed text[], p_seen text[],
   p_started_at timestamptz, p_finished_at timestamptz, p_language text
 )
 returns jsonb language plpgsql volatile security definer set search_path = ''
 as $$
 declare
+  v_trip_id   uuid := vienna.require_trip(p_token, p_device_id);
   v_trip      vienna.trips%rowtype;
   v_completed text[];
   v_seen      text[];
 begin
-  perform vienna.assert_member(p_trip_id);
-  perform vienna.touch_member(p_trip_id);
-  select * into v_trip from vienna.trips where id = p_trip_id for update;
+  select * into v_trip from vienna.trips where id = v_trip_id for update;
 
   select coalesce(array_agg(c order by ord), '{}') into v_completed
     from unnest(vienna.chapter_order()) with ordinality as x(c, ord)
@@ -336,76 +350,136 @@ begin
     finished_at = least(v_trip.finished_at, p_finished_at),
     language    = case when p_language in ('sr', 'de') then p_language else v_trip.language end,
     updated_at  = now()
-  where id = p_trip_id;
+  where id = v_trip_id;
 
-  return vienna.trip_snapshot(p_trip_id);
+  return vienna.trip_snapshot(v_trip_id) - 'trip_id';
 end;
 $$;
 
-create or replace function public.vienna_save_answer(p_trip_id uuid, p_question_id text, p_value text, p_updated_at timestamptz)
+create or replace function public.vienna_save_answer(
+  p_token text, p_device_id uuid, p_question_id text, p_value text, p_updated_at timestamptz
+)
 returns void language plpgsql volatile security definer set search_path = ''
 as $$
+declare
+  v_trip_id uuid := vienna.require_trip(p_token, p_device_id);
 begin
-  perform vienna.assert_member(p_trip_id);
-  perform vienna.touch_member(p_trip_id);
   insert into vienna.answers (trip_id, question_id, value, updated_at)
-  values (p_trip_id, p_question_id, left(coalesce(p_value, ''), 2000), coalesce(p_updated_at, now()))
+  values (v_trip_id, p_question_id, left(coalesce(p_value, ''), 2000), coalesce(p_updated_at, now()))
   on conflict (trip_id, question_id) do update
     set value = excluded.value, updated_at = excluded.updated_at
     where vienna.answers.updated_at <= excluded.updated_at;
 end;
 $$;
 
--- Registriert ein Tagesfoto. Pfad MUSS trips/<trip_id>/day/… sein. Gibt den ersetzten Pfad zurück.
-create or replace function public.vienna_record_upload(p_trip_id uuid, p_chapter_id text, p_path text, p_captured_at timestamptz)
+create or replace function public.vienna_mark_message_read(p_token text, p_device_id uuid, p_message_id uuid)
+returns void language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v_trip_id uuid := vienna.require_trip(p_token, p_device_id);
+begin
+  update vienna.messages set read_at = coalesce(read_at, now()) where id = p_message_id and trip_id = v_trip_id;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- 5. Media-API – NUR für die Edge Function `vienna-media` (service_role)
+-- -----------------------------------------------------------------------------
+
+-- Stellt ein Upload-Ticket aus: Pfad wird hier erzeugt. Missbrauchsschutz:
+-- max. 15 Tickets pro Gerät in 10 Minuten, max. 60 pro Trip und Stunde.
+create or replace function public.vienna_media_issue_upload(p_token text, p_device_id uuid, p_chapter_id text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v_trip_id uuid := vienna.require_trip(p_token, p_device_id);
+  v_path    text;
+begin
+  if p_chapter_id is null or not (p_chapter_id = any (vienna.chapter_order())) then
+    raise exception 'invalid_chapter' using errcode = '22023';
+  end if;
+  if (select count(*) from vienna.upload_tickets
+       where trip_id = v_trip_id and device_id = p_device_id and issued_at > now() - interval '10 minutes') >= 15
+     or (select count(*) from vienna.upload_tickets
+       where trip_id = v_trip_id and issued_at > now() - interval '1 hour') >= 60 then
+    raise exception 'rate_limited' using errcode = 'P0001';
+  end if;
+  v_path := 'trips/' || v_trip_id::text || '/day/' || p_chapter_id || '-' || replace(gen_random_uuid()::text, '-', '') || '.jpg';
+  insert into vienna.upload_tickets (path, trip_id, device_id, chapter_id) values (v_path, v_trip_id, p_device_id, p_chapter_id);
+  return jsonb_build_object('bucket', 'vienna-day', 'path', v_path);
+end;
+$$;
+
+-- Bestätigt einen Upload. Der Pfad MUSS ein vom Server ausgestelltes, unbenutztes, höchstens 2 Stunden altes
+-- Ticket dieses Trips sein (die Edge Function prüft vorher, dass die Datei wirklich im Bucket liegt).
+-- Gibt den ersetzten Pfad zurück (zum Aufräumen durch die Edge Function).
+create or replace function public.vienna_media_confirm_upload(
+  p_token text, p_device_id uuid, p_chapter_id text, p_path text, p_captured_at timestamptz
+)
 returns text language plpgsql volatile security definer set search_path = ''
 as $$
 declare
+  v_trip_id  uuid := vienna.require_trip(p_token, p_device_id);
   v_previous text;
 begin
-  perform vienna.assert_member(p_trip_id);
-  if p_path is null or position(('trips/' || p_trip_id::text || '/day/') in p_path) <> 1 then
-    raise exception 'invalid_path' using errcode = '22023';
+  update vienna.upload_tickets set used_at = now()
+   where path = p_path and trip_id = v_trip_id and chapter_id = p_chapter_id and used_at is null
+     and issued_at > now() - interval '2 hours';
+  if not found then
+    raise exception 'invalid_upload' using errcode = '22023';
   end if;
-  select storage_path into v_previous from vienna.uploads where trip_id = p_trip_id and chapter_id = p_chapter_id;
+  select storage_path into v_previous from vienna.uploads where trip_id = v_trip_id and chapter_id = p_chapter_id;
   insert into vienna.uploads (trip_id, chapter_id, storage_path, captured_at, uploaded_at)
-  values (p_trip_id, p_chapter_id, p_path, coalesce(p_captured_at, now()), now())
+  values (v_trip_id, p_chapter_id, p_path, coalesce(p_captured_at, now()), now())
   on conflict (trip_id, chapter_id) do update
     set storage_path = excluded.storage_path, captured_at = excluded.captured_at, uploaded_at = excluded.uploaded_at;
   return v_previous;
 end;
 $$;
 
-create or replace function public.vienna_mark_message_read(p_trip_id uuid, p_message_id uuid)
-returns void language plpgsql volatile security definer set search_path = ''
+-- Filtert angefragte Pfade auf solche, die diesem Trip gehören (registrierte Tagesfotos/Familien-Assets).
+create or replace function public.vienna_media_readable(p_token text, p_device_id uuid, p_paths text[])
+returns jsonb language plpgsql volatile security definer set search_path = ''
 as $$
+declare
+  v_trip_id uuid := vienna.require_trip(p_token, p_device_id);
 begin
-  perform vienna.assert_member(p_trip_id);
-  update vienna.messages set read_at = coalesce(read_at, now()) where id = p_message_id and trip_id = p_trip_id;
+  return coalesce((
+    select jsonb_agg(jsonb_build_object('bucket', x.bucket, 'path', x.path))
+    from (
+      select 'vienna-day' as bucket, u.storage_path as path from vienna.uploads u
+       where u.trip_id = v_trip_id and u.storage_path = any (coalesce(p_paths, '{}'))
+      union
+      select 'vienna-memories', s.storage_path from vienna.assets s
+       where s.trip_id = v_trip_id and s.storage_path is not null and s.storage_path = any (coalesce(p_paths, '{}'))
+    ) x), '[]'::jsonb);
 end;
 $$;
 
--- Testdaten zurücksetzen (Debug). Familien-Assets bleiben erhalten. Gibt die Tagesfoto-Pfade zurück.
-create or replace function public.vienna_reset_trip(p_trip_id uuid)
+-- Testdaten zurücksetzen (Debug). Familien-Assets bleiben. Gibt die zu löschenden Tagesfoto-Pfade zurück.
+create or replace function public.vienna_media_reset(p_token text, p_device_id uuid)
 returns text[] language plpgsql volatile security definer set search_path = ''
 as $$
 declare
-  v_paths text[];
+  v_trip_id uuid := vienna.require_trip(p_token, p_device_id);
+  v_paths   text[];
 begin
-  perform vienna.assert_member(p_trip_id);
-  select coalesce(array_agg(storage_path), '{}') into v_paths from vienna.uploads where trip_id = p_trip_id;
-  delete from vienna.uploads  where trip_id = p_trip_id;
-  delete from vienna.answers  where trip_id = p_trip_id;
-  delete from vienna.messages where trip_id = p_trip_id;
+  select coalesce(array_agg(distinct p), '{}') into v_paths from (
+    select storage_path as p from vienna.uploads where trip_id = v_trip_id
+    union select path from vienna.upload_tickets where trip_id = v_trip_id) x;
+  delete from vienna.uploads        where trip_id = v_trip_id;
+  delete from vienna.upload_tickets where trip_id = v_trip_id;
+  delete from vienna.answers        where trip_id = v_trip_id;
+  delete from vienna.messages       where trip_id = v_trip_id;
   update vienna.trips set phase = 'opening', completed_chapters = '{}', seen = '{}', current_chapter = 0,
-         started_at = null, finished_at = null, updated_at = now()
-   where id = p_trip_id;
+         started_at = null, finished_at = null, reset_at = now(), updated_at = now()
+   where id = v_trip_id;
   return v_paths;
 end;
 $$;
 
 -- -----------------------------------------------------------------------------
--- 5. Admin-API (E-Mail-Login + Eintrag in vienna.admins)
+-- 6. Admin-API (E-Mail-Login + Eintrag in vienna.admins)
 -- -----------------------------------------------------------------------------
 create or replace function public.vienna_admin_whoami()
 returns jsonb language sql stable security definer set search_path = ''
@@ -420,9 +494,9 @@ begin
     select jsonb_agg(vienna.trip_snapshot(t.id) || jsonb_build_object(
       'label', t.label, 'created_at', t.created_at,
       'members', coalesce((
-        select jsonb_agg(jsonb_build_object('device', m.device, 'joined_at', m.joined_at, 'last_seen_at', m.last_seen_at)
-                         order by m.last_seen_at desc nulls last)
-        from vienna.trip_members m where m.trip_id = t.id), '[]'::jsonb)
+        select jsonb_agg(jsonb_build_object('device', d.label, 'joined_at', d.joined_at, 'last_seen_at', d.last_seen_at)
+                         order by d.last_seen_at desc)
+        from vienna.devices d where d.trip_id = t.id), '[]'::jsonb)
     ) order by t.created_at)
     from vienna.trips t), '[]'::jsonb);
 end;
@@ -450,7 +524,6 @@ begin
 end;
 $$;
 
--- Registriert eine hochgeladene Asset-Datei (Pfad MUSS trips/<trip_id>/… sein). Gibt die ersetzte Datei zurück.
 create or replace function public.vienna_admin_set_asset(p_trip_id uuid, p_slot text, p_path text, p_mime text)
 returns text language plpgsql volatile security definer set search_path = ''
 as $$
@@ -458,7 +531,7 @@ declare
   v_previous text;
 begin
   perform vienna.assert_admin();
-  if p_path is null or position(('trips/' || p_trip_id::text || '/') in p_path) <> 1 or p_path like '%/day/%' then
+  if p_path is null or p_path !~ ('^trips/' || p_trip_id::text || '/(family|video|audio)/[A-Za-z]+-[a-z0-9]+\.[a-z0-9]{2,5}$') then
     raise exception 'invalid_path' using errcode = '22023';
   end if;
   select storage_path into v_previous from vienna.assets where trip_id = p_trip_id and slot = p_slot;
@@ -469,7 +542,6 @@ begin
 end;
 $$;
 
--- Optionale Metadaten (Bildunterschrift SR/DE, Jahr, Ort, Notiz). Leere Strings = entfernen.
 create or replace function public.vienna_admin_update_asset_meta(
   p_trip_id uuid, p_slot text, p_caption_sr text, p_caption_de text, p_year text, p_location text, p_note text
 )
@@ -486,7 +558,6 @@ begin
 end;
 $$;
 
--- Entfernt die Datei-Zuordnung (Metadaten bleiben). Gibt den Pfad zum Löschen zurück.
 create or replace function public.vienna_admin_remove_asset(p_trip_id uuid, p_slot text)
 returns text language plpgsql volatile security definer set search_path = ''
 as $$
@@ -500,7 +571,7 @@ begin
 end;
 $$;
 
--- Nur im SQL-Editor (keine Client-Rolle): Trip anlegen / per Token zurücksetzen.
+-- Nur im SQL-Editor (keine Client-Rolle):
 create or replace function public.vienna_create_trip(p_token text, p_label text default null)
 returns uuid language plpgsql volatile security definer set search_path = ''
 as $$
@@ -525,95 +596,80 @@ begin
   if v_id is null then
     raise exception 'trip not found';
   end if;
-  delete from vienna.uploads      where trip_id = v_id;
-  delete from vienna.answers      where trip_id = v_id;
-  delete from vienna.messages     where trip_id = v_id;
-  delete from vienna.trip_members where trip_id = v_id;
+  delete from vienna.uploads        where trip_id = v_id;
+  delete from vienna.upload_tickets where trip_id = v_id;
+  delete from vienna.answers        where trip_id = v_id;
+  delete from vienna.messages       where trip_id = v_id;
+  delete from vienna.devices        where trip_id = v_id;
   update vienna.trips set phase = 'opening', completed_chapters = '{}', seen = '{}', current_chapter = 0,
-         started_at = null, finished_at = null, updated_at = now()
+         started_at = null, finished_at = null, reset_at = now(), updated_at = now()
    where id = v_id;
   return v_id;
 end;
 $$;
 
--- Markierung + Rechte NUR für die Vienna-Funktionen
-comment on function public.vienna_join_trip(text, text)                                                      is 'vienna-gift module';
-comment on function public.vienna_save_progress(uuid, text, text[], text[], timestamptz, timestamptz, text)   is 'vienna-gift module';
-comment on function public.vienna_save_answer(uuid, text, text, timestamptz)                                  is 'vienna-gift module';
-comment on function public.vienna_record_upload(uuid, text, text, timestamptz)                                is 'vienna-gift module';
-comment on function public.vienna_mark_message_read(uuid, uuid)                                               is 'vienna-gift module';
-comment on function public.vienna_reset_trip(uuid)                                                            is 'vienna-gift module';
-comment on function public.vienna_admin_whoami()                                                              is 'vienna-gift module';
-comment on function public.vienna_admin_overview()                                                            is 'vienna-gift module';
-comment on function public.vienna_admin_send_message(uuid, text, boolean)                                     is 'vienna-gift module';
-comment on function public.vienna_admin_delete_message(uuid)                                                  is 'vienna-gift module';
-comment on function public.vienna_admin_set_asset(uuid, text, text, text)                                     is 'vienna-gift module';
-comment on function public.vienna_admin_update_asset_meta(uuid, text, text, text, text, text, text)            is 'vienna-gift module';
-comment on function public.vienna_admin_remove_asset(uuid, text)                                              is 'vienna-gift module';
-comment on function public.vienna_create_trip(text, text)                                                     is 'vienna-gift module';
-comment on function public.vienna_admin_reset_trip(text)                                                      is 'vienna-gift module';
-
-revoke all on function public.vienna_join_trip(text, text)                                                    from public, anon, authenticated;
-revoke all on function public.vienna_save_progress(uuid, text, text[], text[], timestamptz, timestamptz, text) from public, anon, authenticated;
-revoke all on function public.vienna_save_answer(uuid, text, text, timestamptz)                                from public, anon, authenticated;
-revoke all on function public.vienna_record_upload(uuid, text, text, timestamptz)                              from public, anon, authenticated;
-revoke all on function public.vienna_mark_message_read(uuid, uuid)                                             from public, anon, authenticated;
-revoke all on function public.vienna_reset_trip(uuid)                                                          from public, anon, authenticated;
-revoke all on function public.vienna_admin_whoami()                                                            from public, anon, authenticated;
-revoke all on function public.vienna_admin_overview()                                                          from public, anon, authenticated;
-revoke all on function public.vienna_admin_send_message(uuid, text, boolean)                                   from public, anon, authenticated;
-revoke all on function public.vienna_admin_delete_message(uuid)                                                from public, anon, authenticated;
-revoke all on function public.vienna_admin_set_asset(uuid, text, text, text)                                   from public, anon, authenticated;
-revoke all on function public.vienna_admin_update_asset_meta(uuid, text, text, text, text, text, text)          from public, anon, authenticated;
-revoke all on function public.vienna_admin_remove_asset(uuid, text)                                            from public, anon, authenticated;
-revoke all on function public.vienna_create_trip(text, text)                                                   from public, anon, authenticated;
-revoke all on function public.vienna_admin_reset_trip(text)                                                    from public, anon, authenticated;
-
-grant execute on function public.vienna_join_trip(text, text)                                                    to authenticated;
-grant execute on function public.vienna_save_progress(uuid, text, text[], text[], timestamptz, timestamptz, text) to authenticated;
-grant execute on function public.vienna_save_answer(uuid, text, text, timestamptz)                                to authenticated;
-grant execute on function public.vienna_record_upload(uuid, text, text, timestamptz)                              to authenticated;
-grant execute on function public.vienna_mark_message_read(uuid, uuid)                                             to authenticated;
-grant execute on function public.vienna_reset_trip(uuid)                                                          to authenticated;
-grant execute on function public.vienna_admin_whoami()                                                            to authenticated;
-grant execute on function public.vienna_admin_overview()                                                          to authenticated;
-grant execute on function public.vienna_admin_send_message(uuid, text, boolean)                                   to authenticated;
-grant execute on function public.vienna_admin_delete_message(uuid)                                                to authenticated;
-grant execute on function public.vienna_admin_set_asset(uuid, text, text, text)                                   to authenticated;
-grant execute on function public.vienna_admin_update_asset_meta(uuid, text, text, text, text, text, text)          to authenticated;
-grant execute on function public.vienna_admin_remove_asset(uuid, text)                                            to authenticated;
+-- -----------------------------------------------------------------------------
+-- 7. Markierung + Rechte NUR für Vienna-Funktionen
+-- -----------------------------------------------------------------------------
+do $grants$
+declare
+  v_fn      regprocedure;
+  v_parent  constant text[] := array['vienna_join_trip', 'vienna_save_progress', 'vienna_save_answer',
+                                     'vienna_mark_message_read'];
+  v_media   constant text[] := array['vienna_media_issue_upload', 'vienna_media_confirm_upload',
+                                     'vienna_media_readable', 'vienna_media_reset'];
+  v_admin   constant text[] := array['vienna_admin_whoami', 'vienna_admin_overview', 'vienna_admin_send_message',
+                                     'vienna_admin_delete_message', 'vienna_admin_set_asset',
+                                     'vienna_admin_update_asset_meta', 'vienna_admin_remove_asset'];
+  v_sql     constant text[] := array['vienna_create_trip', 'vienna_admin_reset_trip'];
+begin
+  for v_fn in
+    select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = any (v_parent || v_media || v_admin || v_sql)
+  loop
+    execute format('comment on function %s is %L', v_fn, 'vienna-gift module');
+    execute format('revoke all on function %s from public, anon, authenticated, service_role', v_fn);
+    if (select proname from pg_proc where oid = v_fn) = any (v_parent) then
+      execute format('grant execute on function %s to anon, authenticated', v_fn);
+    elsif (select proname from pg_proc where oid = v_fn) = any (v_media) then
+      execute format('grant execute on function %s to service_role', v_fn);
+    elsif (select proname from pg_proc where oid = v_fn) = any (v_admin) then
+      execute format('grant execute on function %s to authenticated', v_fn);
+    end if;
+  end loop;
+end
+$grants$;
 
 -- -----------------------------------------------------------------------------
--- 6. Admin-Lesezugriff per RLS (Grundlage für Realtime im Dashboard)
---    Nur Vienna-Tabellen; Eltern-Sessions erfüllen die Policies nie.
+-- 8. Admin-Lesezugriff per RLS (Grundlage für Realtime im Dashboard). Nur Vienna-Tabellen.
 -- -----------------------------------------------------------------------------
 grant select (id, label, phase, current_chapter, completed_chapters, seen, language,
-              started_at, finished_at, created_at, updated_at) on vienna.trips to authenticated;
-grant select on vienna.trip_members, vienna.uploads, vienna.answers, vienna.messages, vienna.assets to authenticated;
+              started_at, finished_at, reset_at, created_at, updated_at) on vienna.trips to authenticated;
+grant select on vienna.devices, vienna.uploads, vienna.answers, vienna.messages, vienna.assets to authenticated;
 
 drop policy if exists vienna_admin_read_trips    on vienna.trips;
-drop policy if exists vienna_admin_read_members  on vienna.trip_members;
+drop policy if exists vienna_admin_read_devices  on vienna.devices;
 drop policy if exists vienna_admin_read_uploads  on vienna.uploads;
 drop policy if exists vienna_admin_read_answers  on vienna.answers;
 drop policy if exists vienna_admin_read_messages on vienna.messages;
 drop policy if exists vienna_admin_read_assets   on vienna.assets;
-create policy vienna_admin_read_trips    on vienna.trips        for select to authenticated using (vienna.is_admin());
-create policy vienna_admin_read_members  on vienna.trip_members for select to authenticated using (vienna.is_admin());
-create policy vienna_admin_read_uploads  on vienna.uploads      for select to authenticated using (vienna.is_admin());
-create policy vienna_admin_read_answers  on vienna.answers      for select to authenticated using (vienna.is_admin());
-create policy vienna_admin_read_messages on vienna.messages     for select to authenticated using (vienna.is_admin());
-create policy vienna_admin_read_assets   on vienna.assets       for select to authenticated using (vienna.is_admin());
--- vienna.admins: RLS an, keine Policy, keine Grants → für Clients unsichtbar.
+create policy vienna_admin_read_trips    on vienna.trips    for select to authenticated using (vienna.is_admin());
+create policy vienna_admin_read_devices  on vienna.devices  for select to authenticated using (vienna.is_admin());
+create policy vienna_admin_read_uploads  on vienna.uploads  for select to authenticated using (vienna.is_admin());
+create policy vienna_admin_read_answers  on vienna.answers  for select to authenticated using (vienna.is_admin());
+create policy vienna_admin_read_messages on vienna.messages for select to authenticated using (vienna.is_admin());
+create policy vienna_admin_read_assets   on vienna.assets   for select to authenticated using (vienna.is_admin());
+-- vienna.admins, vienna.upload_tickets: RLS an, keine Policy, keine Grants → für Clients unsichtbar.
 
 -- -----------------------------------------------------------------------------
--- 7. Realtime: Vienna-Tabellen nur HINZUFÜGEN (bestehende Konfiguration bleibt unberührt)
+-- 9. Realtime: Vienna-Tabellen nur HINZUFÜGEN
 -- -----------------------------------------------------------------------------
 do $rt$
 declare
   v_table text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime' and not puballtables) then
-    foreach v_table in array array['trips', 'trip_members', 'uploads', 'answers', 'messages', 'assets'] loop
+    foreach v_table in array array['trips', 'devices', 'uploads', 'answers', 'messages', 'assets'] loop
       if not exists (select 1 from pg_publication_tables
                      where pubname = 'supabase_realtime' and schemaname = 'vienna' and tablename = v_table) then
         execute format('alter publication supabase_realtime add table vienna.%I', v_table);
@@ -624,46 +680,38 @@ end
 $rt$;
 
 -- -----------------------------------------------------------------------------
--- 8. Storage: eigener privater Bucket + Policies NUR für diesen Bucket
---    Struktur: trips/<trip_id>/day/…    Tagesfotos (Eltern-Geräte)
---              trips/<trip_id>/family/… Familienfotos (Admin)
---              trips/<trip_id>/video/…  Video + Vorschaubild (Admin)
---              trips/<trip_id>/audio/…  Sprachnachrichten (Admin)
+-- 10. Storage: zwei eigene private Buckets; Policies NUR für Vienna-Admins
+--     vienna-day:      trips/<trip_id>/day/…   Tagesfotos (Upload nur per signierter URL der Edge Function)
+--     vienna-memories: trips/<trip_id>/family|video|audio/…  Familien-Assets (Upload durch Admin)
+--     Eltern haben KEINE Storage-Policy – sie bekommen nur kurzlebige signierte URLs.
 -- -----------------------------------------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('vienna-day', 'vienna-day', false, 15728640, array['image/jpeg'])
+on conflict (id) do nothing;
+
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('vienna-memories', 'vienna-memories', false, null, array[
   'image/jpeg', 'image/png', 'image/webp', 'image/heic',
   'video/mp4', 'video/quicktime', 'video/webm',
-  'audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/wav', 'audio/webm', 'text/vtt'])
+  'audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/wav', 'audio/webm'])
 on conflict (id) do nothing;
 
-drop policy if exists vienna_memories_read         on storage.objects;
-drop policy if exists vienna_memories_day_insert   on storage.objects;
-drop policy if exists vienna_memories_day_delete   on storage.objects;
+drop policy if exists vienna_admin_read         on storage.objects;
+drop policy if exists vienna_admin_insert       on storage.objects;
+drop policy if exists vienna_admin_update       on storage.objects;
+drop policy if exists vienna_admin_delete       on storage.objects;
 drop policy if exists vienna_memories_admin_insert on storage.objects;
 drop policy if exists vienna_memories_admin_update on storage.objects;
 drop policy if exists vienna_memories_admin_delete on storage.objects;
 
-create policy vienna_memories_read on storage.objects for select to authenticated
-  using (bucket_id = 'vienna-memories' and (storage.foldername(name))[1] = 'trips'
-         and (vienna.is_admin() or vienna.is_trip_member_folder((storage.foldername(name))[2])));
-
-create policy vienna_memories_day_insert on storage.objects for insert to authenticated
-  with check (bucket_id = 'vienna-memories' and (storage.foldername(name))[1] = 'trips'
-              and (storage.foldername(name))[3] = 'day' and vienna.is_trip_member_folder((storage.foldername(name))[2]));
-
-create policy vienna_memories_day_delete on storage.objects for delete to authenticated
-  using (bucket_id = 'vienna-memories' and (storage.foldername(name))[1] = 'trips'
-         and (storage.foldername(name))[3] = 'day' and vienna.is_trip_member_folder((storage.foldername(name))[2]));
-
-create policy vienna_memories_admin_insert on storage.objects for insert to authenticated
+create policy vienna_admin_read on storage.objects for select to authenticated
+  using (bucket_id in ('vienna-day', 'vienna-memories') and vienna.is_admin());
+create policy vienna_admin_insert on storage.objects for insert to authenticated
   with check (bucket_id = 'vienna-memories' and vienna.is_admin());
-
-create policy vienna_memories_admin_update on storage.objects for update to authenticated
+create policy vienna_admin_update on storage.objects for update to authenticated
   using (bucket_id = 'vienna-memories' and vienna.is_admin());
-
-create policy vienna_memories_admin_delete on storage.objects for delete to authenticated
-  using (bucket_id = 'vienna-memories' and vienna.is_admin());
+create policy vienna_admin_delete on storage.objects for delete to authenticated
+  using (bucket_id in ('vienna-day', 'vienna-memories') and vienna.is_admin());
 
 commit;
 

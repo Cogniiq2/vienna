@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { slotKind, type AssetSlot } from '../config/family';
-import { BUCKET, callRpc, storagePaths } from '../lib/supabaseClient';
+import { callRpc, DAY_BUCKET, MEMORIES_BUCKET, storagePaths } from '../lib/supabaseClient';
 import type { AdminApi, AdminTrip } from './types';
 
 const EXTENSIONS: Record<string, string> = {
@@ -43,11 +43,18 @@ export function createAdminApi(sb: SupabaseClient): AdminApi {
     },
 
     async signedUrls(paths) {
-      if (paths.length === 0) return {};
-      const { data, error } = await sb.storage.from(BUCKET).createSignedUrls(paths, 60 * 60);
-      if (error) throw new Error(error.message);
+      // Tagesfotos liegen in `vienna-day`, Familien-Assets in `vienna-memories` (Admin-Storage-Policy).
       const out: Record<string, string> = {};
-      for (const item of data) if (item.path && item.signedUrl) out[item.path] = item.signedUrl;
+      const groups: Array<[string, string[]]> = [
+        [DAY_BUCKET, paths.filter((p) => storagePaths.isDayPhoto(p))],
+        [MEMORIES_BUCKET, paths.filter((p) => !storagePaths.isDayPhoto(p))],
+      ];
+      for (const [bucket, list] of groups) {
+        if (list.length === 0) continue;
+        const { data, error } = await sb.storage.from(bucket).createSignedUrls(list, 60 * 60);
+        if (error) throw new Error(error.message);
+        for (const item of data) if (item.path && item.signedUrl) out[item.path] = item.signedUrl;
+      }
       return out;
     },
 
@@ -65,14 +72,14 @@ export function createAdminApi(sb: SupabaseClient): AdminApi {
       const type = mimeOf(file);
       const ext = EXTENSIONS[type] ?? file.name.split('.').pop()?.toLowerCase() ?? 'bin';
       const path = storagePaths.asset(tripId, slotKind(slot), slot, Date.now().toString(36), ext);
-      const { error: uploadError } = await sb.storage.from(BUCKET).upload(path, file, { contentType: type, upsert: false });
+      const { error: uploadError } = await sb.storage.from(MEMORIES_BUCKET).upload(path, file, { contentType: type, upsert: false });
       if (uploadError) throw new Error(uploadError.message);
       const { data, error } = await callRpc(sb, 'vienna_admin_set_asset', { p_trip_id: tripId, p_slot: slot, p_path: path, p_mime: type });
       if (error) {
-        await sb.storage.from(BUCKET).remove([path]);
+        await sb.storage.from(MEMORIES_BUCKET).remove([path]);
         throw new Error(error.message);
       }
-      if (typeof data === 'string' && data !== path) await sb.storage.from(BUCKET).remove([data]);
+      if (typeof data === 'string' && data !== path) await sb.storage.from(MEMORIES_BUCKET).remove([data]);
     },
 
     async updateAssetMeta(tripId, slot, meta) {
@@ -91,12 +98,12 @@ export function createAdminApi(sb: SupabaseClient): AdminApi {
     async removeAsset(tripId, slot) {
       const { data, error } = await callRpc(sb, 'vienna_admin_remove_asset', { p_trip_id: tripId, p_slot: slot });
       if (error) throw new Error(error.message);
-      if (typeof data === 'string') await sb.storage.from(BUCKET).remove([data]);
+      if (typeof data === 'string') await sb.storage.from(MEMORIES_BUCKET).remove([data]);
     },
 
     subscribe(onChange, onStatus) {
       const channel = sb.channel('vienna-admin');
-      for (const table of ['trips', 'trip_members', 'uploads', 'answers', 'messages', 'assets']) {
+      for (const table of ['trips', 'devices', 'uploads', 'answers', 'messages', 'assets']) {
         channel.on('postgres_changes', { event: '*', schema: 'vienna', table }, () => onChange());
       }
       channel.subscribe((status) => onStatus(`${status}` === 'SUBSCRIBED'));

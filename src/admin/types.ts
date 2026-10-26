@@ -26,7 +26,8 @@ export interface AdminAsset {
   updated_at?: string | null;
 }
 
-export interface AdminTrip extends Omit<SnapshotRow, 'uploads' | 'assets'> {
+export interface AdminTrip extends Omit<SnapshotRow, 'trip_id' | 'uploads' | 'assets'> {
+  trip_id: string;
   label: string | null;
   created_at: string;
   current_chapter: number;

@@ -1,9 +1,10 @@
 -- =============================================================================
 -- Entfernt das Vienna-Modul vollständig – und NUR das Vienna-Modul.
 -- Läuft nur, wenn das Schema `vienna` die Markierung 'vienna-gift module' trägt.
--- ACHTUNG: löscht alle Vienna-Daten (Trips, Antworten, Nachrichten, Asset-Zuordnungen).
--- Die Dateien im Bucket `vienna-memories` vorher im Dashboard löschen (Storage → vienna-memories),
--- danach wird der leere Bucket hier entfernt.
+-- ACHTUNG: löscht alle Vienna-Daten (Trips, Geräte, Antworten, Nachrichten, Asset-Zuordnungen).
+-- Dateien in den Buckets `vienna-day` und `vienna-memories` vorher im Dashboard löschen
+-- (Storage → Bucket → alles auswählen → Delete); leere Buckets werden hier entfernt.
+-- Danach zusätzlich: supabase functions delete vienna-media --project-ref <ref>
 -- =============================================================================
 begin;
 
@@ -14,6 +15,11 @@ begin
   end if;
 end $$;
 
+-- Nur Vienna-Storage-Policies (aktuelle und frühere Namen).
+drop policy if exists vienna_admin_read            on storage.objects;
+drop policy if exists vienna_admin_insert          on storage.objects;
+drop policy if exists vienna_admin_update          on storage.objects;
+drop policy if exists vienna_admin_delete          on storage.objects;
 drop policy if exists vienna_memories_read         on storage.objects;
 drop policy if exists vienna_memories_day_insert   on storage.objects;
 drop policy if exists vienna_memories_day_delete   on storage.objects;
@@ -40,8 +46,8 @@ end $$;
 -- CASCADE wirkt hier nur innerhalb des eigenen Schemas `vienna`.
 drop schema vienna cascade;
 
-delete from storage.buckets
- where id = 'vienna-memories'
-   and not exists (select 1 from storage.objects where bucket_id = 'vienna-memories');
+delete from storage.buckets b
+ where b.id in ('vienna-day', 'vienna-memories')
+   and not exists (select 1 from storage.objects o where o.bucket_id = b.id);
 
 commit;

@@ -5,7 +5,8 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'node_modules', 'supabase/.temp'] },
+  // index.ts der Edge Function ist Deno-Code (npm:-Imports) – geprüft wird die Logik in handler.ts.
+  { ignores: ['dist', 'node_modules', 'supabase/.temp', 'supabase/functions/*/index.ts'] },
   {
     files: ['**/*.{ts,tsx}'],
     extends: [js.configs.recommended, ...tseslint.configs.recommendedTypeChecked],
@@ -13,7 +14,7 @@ export default tseslint.config(
       ecmaVersion: 2022,
       globals: globals.browser,
       parserOptions: {
-        project: ['./tsconfig.app.json', './tsconfig.node.json'],
+        project: ['./tsconfig.app.json', './tsconfig.node.json', './tsconfig.functions.json'],
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -28,6 +29,11 @@ export default tseslint.config(
       '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: { attributes: false } }],
       '@typescript-eslint/consistent-type-imports': 'error',
     },
+  },
+  {
+    // Test-Mocks dürfen async ohne await sein.
+    files: ['**/*.test.{ts,tsx}'],
+    rules: { '@typescript-eslint/require-await': 'off' },
   },
   {
     files: ['scripts/**/*.mjs', 'eslint.config.js'],

@@ -15,7 +15,7 @@ console.log(`
 
    select public.vienna_create_trip('${token}', 'Mama & Tata · Wien 27.10.2026');
 
-2) Privater Link für Mama & Papa:
+2) Privater Link für Mama & Tata:
 
    ${base}/trip/${token}
 

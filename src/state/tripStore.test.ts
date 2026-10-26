@@ -17,6 +17,7 @@ class FakeBackend implements TripBackend {
   messages: LiveMessage[] = [];
   assets: RemoteSnapshot['assets'] = {};
   devices: string[] = [];
+  resetAt: string | null = null;
 
   private check() {
     if (!this.online) throw new BackendError('unreachable', 'offline');
@@ -33,6 +34,7 @@ class FakeBackend implements TripBackend {
       uploads,
       messages: this.messages.map((m) => ({ ...m })),
       assets: { ...this.assets },
+      resetAt: this.resetAt,
     });
   }
   saveProgress(p: TripProgress) {
@@ -65,7 +67,8 @@ class FakeBackend implements TripBackend {
     return Promise.resolve(`https://signed.example/${path}?token=x`);
   }
   reset() {
-    this.progress = { ...this.progress, phase: 'opening', completed: [] };
+    this.resetAt = new Date().toISOString();
+    this.progress = { phase: 'opening', completed: [], seen: [], startedAt: null, finishedAt: null, updatedAt: this.resetAt };
     this.uploads = {};
     this.responses = {};
     return Promise.resolve();
@@ -163,6 +166,45 @@ describe('TripStore', () => {
     expect(await photoStore.list(key)).toEqual([]);
     expect(backend.uploads).toEqual({});
     store.dispose();
+  });
+
+  it('a test reset is not undone by a second phone that still holds the old state', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-26T10:00:00Z'));
+    const backend = new FakeBackend();
+    const phoneA = new TripStore(nextToken(), backend);
+    const phoneB = new TripStore(nextToken(), backend);
+    await phoneA.init();
+    await phoneB.init();
+    phoneA.advanceTo('journey');
+    await phoneA.savePhoto('morning', image());
+    phoneA.completeChapter('morning');
+    phoneA.setResponse('dinner.moment', 'Тест');
+    await phoneA.sync();
+    await phoneB.refresh();
+    expect(phoneB.getState().progress.completed).toEqual(['morning']);
+
+    vi.setSystemTime(new Date('2026-10-26T11:00:00Z'));
+    await phoneA.resetAll();
+    await phoneB.refresh();
+    expect(phoneB.getState().progress.phase).toBe('opening');
+    expect(phoneB.getState().progress.completed).toEqual([]);
+    expect(phoneB.getState().responses).toEqual({});
+    expect(phoneB.getState().photos).toEqual({});
+    expect(backend.progress.completed).toEqual([]);
+    expect(backend.responses).toEqual({});
+
+    // Was nach dem Reset (auch offline) entsteht, bleibt erhalten.
+    vi.setSystemTime(new Date('2026-10-26T12:00:00Z'));
+    backend.online = false;
+    phoneB.advanceTo('journey');
+    phoneB.completeChapter('morning');
+    backend.online = true;
+    await phoneB.refresh();
+    expect(phoneB.getState().progress.completed).toEqual(['morning']);
+    expect(backend.progress.completed).toEqual(['morning']);
+    phoneA.dispose();
+    phoneB.dispose();
   });
 
   it('delivers live messages on the next sync and marks them read on the server', async () => {

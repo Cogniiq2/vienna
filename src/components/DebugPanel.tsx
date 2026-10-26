@@ -118,7 +118,7 @@ export function DebugPanel() {
         </button>
       </div>
       <p className="debug__meta">
-        Phase: <b>{state.progress.phase}</b> · Kapitel {state.progress.completed.length}/6 · gesehen {state.progress.seen.length} ·{' '}
+        Phase: <b>{state.progress.phase}</b> · Kapitel {state.progress.completed.length}/{CHAPTER_IDS.length} · gesehen {state.progress.seen.length} ·{' '}
         <b>{state.connection}</b>
         {state.pending ? ' · ausstehend' : ''}
       </p>

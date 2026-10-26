@@ -6,7 +6,7 @@ Eine Familiengeschichte („Ваша прича.“) mit alten Fotos, Video und 
 das Material im Admin hochladet.
 
 - **Sprache:** Serbisch (Kyrillisch) als Standard, Deutsch per `СР | DE`. „Јел’ знате?“ wird nie übersetzt und nie erklärt.
-- **Stack:** Vite + React 19 + TypeScript (strict), Supabase (isoliertes Modul im bestehenden Projekt), pdf-lib
+- **Stack:** Vite + React 19 + TypeScript (strict), Supabase (isoliertes Modul im bestehenden Projekt, Edge Function `vienna-media`), pdf-lib
 - **Hosting:** Cloudflare Pages
 
 ## Ablauf
@@ -23,108 +23,161 @@ Keine biografischen Seiten zwischen den Kapiteln des Dienstags.
 
 ---
 
-## Produktiv gehen – Checkliste
+## Architektur (Option B – ohne Anonymous Sign-ins)
 
-1. **Migration prüfen & ausführen:** `supabase/migrations/20261026000000_vienna_module.sql` (siehe Safety-Report unten).
-2. **Auth:** anonyme Anmeldung aktivieren – **vorher Prüf-Abfrage ausführen** (siehe „Auth“).
-3. **Admin:** dich als User anlegen + `insert into vienna.admins (email) values ('deine@mail.de');`
-4. **Cloudflare ENV:** `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (Production + Preview), optional `VITE_ENABLE_DEBUG=true` nur Preview.
-5. **Trip:** `npm run trip:create -- https://<projekt>.pages.dev` → ausgegebenes `select public.vienna_create_trip(...)` ausführen → Link an die Eltern.
-6. **Familienfoto:** `/admin` → Familien-Assets → „Aktuelles Familienfoto“ → Hochladen. Fertig.
-7. Später weitere Fotos, Video, Audios genauso. **Kein Code, kein Commit, kein Redeploy.**
-8. Tagesdetails in `src/config/trip.ts` (Hoteladresse, Tickets, Restaurant …) – das braucht einen Deploy.
+```
+iPhone (Mama/Tata)                    Supabase (bestehendes All-in-One-Projekt)
+ ├─ kein Login, keine Supabase-Session
+ ├─ Trip-Token (aus dem Link, 192 Bit)  ─RPC─▶ public.vienna_* (SECURITY DEFINER, prüft Token-Hash + registriert Geräte-ID)
+ ├─ Geräte-ID (zufällige UUID, lokal)        └─ Schema vienna (Tabellen für Clients komplett gesperrt)
+ └─ Fotos ───────────────────────────── POST ▶ Edge Function vienna-media (Service Role NUR hier)
+                                               ├─ upload-url:   Pfad + Ticket von der DB → signierte Upload-URL (vienna-day)
+                                               ├─ confirm-upload: Datei vorhanden? Ticket gültig? → registrieren
+                                               ├─ read-urls:    nur Pfade dieses Trips → signierte Lese-URLs (6 h)
+                                               └─ reset:        nur mit VIENNA_ALLOW_RESET=true
+Admin (/admin) ── normaler E-Mail-Login (Magic Link) + Eintrag in vienna.admins ── RLS/Storage-Policies nur für Vienna-Admins
+```
+
+- **Anonymous Sign-ins bleiben im Projekt AUS.** Die Eltern-Geräte benutzen ausschließlich die Rolle `anon`
+  (öffentlicher Key) und erreichen damit nur die fünf Eltern-RPCs. Policies anderer Apps für `authenticated`
+  (z. B. `capabilities_select_authenticated`, `solution_catalog_select_active_or_admin`) sind für sie unerreichbar.
+- **Pfade erzeugt immer der Server** (`trips/<trip-id>/day/<kapitel>-<zufall>.jpg`). Der Client kann keinen Pfad,
+  keinen Bucket und keinen fremden Trip angeben; registriert wird nur ein unbenutztes, ≤ 2 h altes Ticket desselben
+  Trips, dessen Datei wirklich im Bucket liegt.
+- **Ungültige/fehlende Tokens** liefern überall dieselbe Meldung `invalid_token` (RPC und Edge Function) – ohne Trip-ID,
+  Label oder sonstige Metadaten. Auch gültige Eltern-Snapshots enthalten keine Trip-ID.
+- **Missbrauchsschutz:** Token 192 Bit (nicht erratbar), Formatprüfung vor jeder DB-Abfrage, Upload-Tickets max. 15 pro
+  Gerät/10 min und 60 pro Trip/h (DB), 120 Requests/min pro IP (Edge-Instanz), Request-Body ≤ 8 KB, max. 40 Pfade pro
+  Lese-Anfrage, Bucket `vienna-day` nimmt nur JPEG ≤ 15 MB an, CORS nur für die Vienna-Domain(s).
+- **Offline:** Fotos liegen in IndexedDB, bis Upload + Bestätigung durch sind (auch über Safari-Schließen hinweg).
+- **Zwei Handys:** Fortschritt wird monoton zusammengeführt. Nach einem Test-Reset (`reset_at`) verwirft ein Gerät
+  seinen älteren lokalen Stand, statt ihn zurückzuspielen – wichtig, damit eure Testhandys den echten Trip nicht „auffüllen“.
 
 ---
 
-## ALL-IN-ONE SUPABASE SAFETY REPORT
+## GO-LIVE-Checkliste
 
-Die alten Migrationen (für ein leeres Projekt geschrieben) wurden **entfernt** und durch **eine** additive Migration ersetzt.
-Gefundene und beseitigte Risiken der alten Version: `revoke … on schema private` / `revoke execute on all functions in schema private`
-(hätte fremde Funktionen getroffen), generische Tabellen `public.trips|messages|uploads|responses`, generische RPCs
-(`join_trip`, `admin_overview`, …), `private.admins`, `on conflict do update` auf `storage.buckets`, `create extension pgcrypto`.
+> Reihenfolge einhalten. Nichts davon ändert Auth-Einstellungen oder Objekte anderer Apps.
 
-**Kollisionsschutz:** Die Migration läuft in einer Transaktion und bricht vor jeder Änderung ab (Rollback), falls
-ein Schema `vienna`, eine Funktion `public.vienna_*`, der Bucket `vienna-memories` oder Storage-Policies `vienna_*`
-existieren, die **nicht** von diesem Modul stammen (Markierung `COMMENT … 'vienna-gift module'`). Wiederholtes Ausführen ist sicher.
+**0. Vorab (einmalig, lesend):** Supabase Dashboard → Authentication → Sign In / Providers →
+„Allow anonymous sign-ins“ ist **aus** und bleibt aus.
+
+**1. Migration** – im **SQL-Editor** des Projekts den Inhalt von
+`supabase/migrations/20261026000000_vienna_module.sql` ausführen.
+- *Nicht* `supabase db push` / `supabase link` + `config push` aus diesem Repo gegen das All-in-One-Projekt
+  verwenden: das würde die Migrationshistorie bzw. Projekt-Konfiguration der anderen Apps berühren.
+- Erwartet: „Success. No rows returned“. Bei einem Namenskonflikt bricht sie mit „Abbruch: …“ ab und ändert nichts.
+- Kontrolle: `select proname from pg_proc where proname like 'vienna\_%' order by 1;` → 17 Funktionen.
+
+**2. Edge Function `vienna-media`** (Supabase CLI ≥ 2.x, Login mit `supabase login`):
+```bash
+supabase secrets set --project-ref <PROJECT_REF> \
+  VIENNA_ALLOWED_ORIGINS="https://<projekt>.pages.dev,https://*.<projekt>.pages.dev"
+#   + ggf. eigene Domain, z. B. ",https://wien.example.de". Kein Leerzeichen, kein abschließender Slash.
+supabase functions deploy vienna-media --project-ref <PROJECT_REF> --no-verify-jwt --use-api
+```
+- `--no-verify-jwt` ist nötig, weil die Eltern keine Session haben; die Funktion prüft Token + Geräte-ID selbst.
+- `--use-api` bündelt serverseitig (kein Docker nötig). Es wird nur diese eine Funktion angelegt/aktualisiert.
+- `SUPABASE_URL` und `SUPABASE_SERVICE_ROLE_KEY` stellt Supabase der Funktion automatisch bereit.
+  **Den Service-Role-Key nirgends sonst eintragen** – nicht in Cloudflare, nicht als `VITE_*`.
+- `VIENNA_ALLOW_RESET=true` nur während der Testphase setzen (für „Reset alles“ im Debug-Panel), vor der Übergabe:
+  `supabase secrets unset --project-ref <PROJECT_REF> VIENNA_ALLOW_RESET`.
+- Prüfen: `curl -i -X POST https://<PROJECT_REF>.supabase.co/functions/v1/vienna-media -H 'origin: https://<projekt>.pages.dev' -d '{}'`
+  → `401 {"error":"invalid_token"}`. Mit fremder Origin → `403`.
+
+**3. Admin**
+- Authentication → Users → „Add user“ (oder vorhandenen E-Mail-User nutzen).
+- SQL: `insert into vienna.admins (email) values ('deine@mail.de');` (Vienna-eigene Liste).
+- Authentication → URL Configuration → Redirect URLs: `https://<projekt>.pages.dev/admin` **hinzufügen**
+  (bestehende Einträge und Site URL nicht ändern).
+
+**4. Cloudflare Pages** – Build `npm run build`, Output `dist`, Umgebungsvariablen (Production **und** Preview):
+
+| Variable | Wert | Hinweis |
+|---|---|---|
+| `VITE_SUPABASE_URL` | `https://<PROJECT_REF>.supabase.co` | öffentlich |
+| `VITE_SUPABASE_ANON_KEY` | anon- bzw. publishable Key | öffentlich (nur Rolle `anon`) |
+| `VITE_ENABLE_DEBUG` | `true` nur in Preview | Production: nicht setzen |
+| `NODE_VERSION` | `22` | |
+
+**5. Trip anlegen:** `npm run trip:create -- https://<projekt>.pages.dev` → ausgegebenes
+`select public.vienna_create_trip(...)` im SQL-Editor ausführen → Link sicher aufbewahren.
+
+**6. Generalprobe** (Preview mit Debug oder Production):
+Link auf zwei Handys öffnen → Kapitel 1 mit Foto (einmal im Flugmodus aufnehmen, dann online) → `/admin` zeigt
+beide Geräte und das Foto → Nachricht senden → erscheint auf dem Handy (≤ 30 s) → Album/PDF erzeugen →
+Reset (`VIENNA_ALLOW_RESET=true` oder SQL, s. u.).
+
+**7. Familienfoto:** `/admin` → Familien-Assets → „Aktuelles Familienfoto“ → Hochladen. Weitere Assets jederzeit
+genauso – kein Code, kein Redeploy.
+
+**8. Übergabe:** `VIENNA_ALLOW_RESET` entfernen, Trip per SQL zurücksetzen (s. u.), Link an Mama & Tata.
+
+---
+
+## ALL-IN-ONE SUPABASE SAFETY REPORT (Option B)
+
+**Grundsatz:** rein additiv, alles Vienna-Eigene im Schema `vienna`, API-Funktionen in `public` nur mit Präfix `vienna_`,
+eigene Buckets, eigene Policy-Namen. Die Migration läuft in **einer Transaktion** und bricht **vor jeder Änderung**
+ab, falls ein Schema `vienna`, eine Funktion `public.vienna_*`, ein Bucket `vienna-day`/`vienna-memories` oder eine
+Storage-Policy `vienna_*` existiert, die nicht von diesem Modul stammt (Markierung `COMMENT … 'vienna-gift module'`).
+Wiederholtes Ausführen ist sicher; ein früherer Vienna-Entwurf (mit `trip_members`) wird dabei sauber ersetzt –
+ausschließlich markierte Vienna-Objekte.
 
 **A. Schemas (neu):** `vienna`
 
-**B. Tabellen (neu, alle in `vienna`, RLS an):** `trips`, `trip_members`, `uploads`, `answers`, `messages`, `assets`, `admins`
+**B. Tabellen (neu, alle `vienna`, RLS an):** `trips`, `devices`, `uploads`, `upload_tickets`, `answers`, `messages`,
+`assets`, `admins`. Für `anon` gibt es weder Schema-Usage noch Tabellenrechte; `authenticated` darf nur lesen, was die
+Admin-Policies (Vienna-Admins) freigeben; `token_hash` ist per Spaltenrecht auch für Admins unsichtbar;
+`admins` und `upload_tickets` haben keine Policy und keine Grants.
 
 **C. Funktionen (neu)**
-- intern (`vienna`): `chapter_order`, `phase_rank`, `hash_token`, `is_trip_member`, `is_trip_member_folder`, `is_admin`,
-  `assert_member`, `assert_admin`, `touch_member`, `trip_snapshot`
-- API (`public`, nur mit Präfix): `vienna_join_trip`, `vienna_save_progress`, `vienna_save_answer`, `vienna_record_upload`,
-  `vienna_mark_message_read`, `vienna_reset_trip`, `vienna_admin_whoami`, `vienna_admin_overview`, `vienna_admin_send_message`,
-  `vienna_admin_delete_message`, `vienna_admin_set_asset`, `vienna_admin_update_asset_meta`, `vienna_admin_remove_asset`,
-  `vienna_create_trip`*, `vienna_admin_reset_trip`* (*nur SQL-Editor, für keine Client-Rolle ausführbar)
+| Gruppe | Funktionen | ausführbar für |
+|---|---|---|
+| intern (`vienna`) | `chapter_order`, `phase_rank`, `hash_token`, `require_trip`, `is_admin`, `assert_admin`, `trip_snapshot` | niemand direkt (`is_admin` für `authenticated`, nur für RLS) |
+| Eltern | `vienna_join_trip`, `vienna_save_progress`, `vienna_save_answer`, `vienna_mark_message_read` | `anon`, `authenticated` – jede prüft Token + Geräte-ID |
+| Media | `vienna_media_issue_upload`, `vienna_media_confirm_upload`, `vienna_media_readable`, `vienna_media_reset` | **nur `service_role`** (Edge Function) |
+| Admin | `vienna_admin_whoami`, `_overview`, `_send_message`, `_delete_message`, `_set_asset`, `_update_asset_meta`, `_remove_asset` | `authenticated`, intern `assert_admin()` |
+| SQL-Editor | `vienna_create_trip`, `vienna_admin_reset_trip` | keine API-Rolle |
+
+Alle `SECURITY DEFINER` mit `search_path = ''` und vollqualifizierten Namen. Keine Extensions (SHA-256/UUID sind Bordmittel).
 
 **D. Trigger:** keine.
 
 **E. Policies (neu)**
-- auf Vienna-Tabellen: `vienna_admin_read_trips|members|uploads|answers|messages|assets` (nur SELECT, nur Vienna-Admins)
-- auf `storage.objects` (nur `bucket_id = 'vienna-memories'`): `vienna_memories_read`, `vienna_memories_day_insert`,
-  `vienna_memories_day_delete`, `vienna_memories_admin_insert`, `vienna_memories_admin_update`, `vienna_memories_admin_delete`
-  – permissiv/additiv, erweitern keine Rechte auf andere Buckets.
+- Vienna-Tabellen: `vienna_admin_read_trips|devices|uploads|answers|messages|assets` (SELECT, nur Vienna-Admins).
+- `storage.objects`: `vienna_admin_read` / `vienna_admin_delete` (Buckets `vienna-day`, `vienna-memories`),
+  `vienna_admin_insert` / `vienna_admin_update` (nur `vienna-memories`) – jeweils nur für Vienna-Admins.
+  **Eltern haben keine einzige Storage-Policy**; sie erhalten nur kurzlebige signierte URLs der Edge Function.
 
-**F. Buckets (neu):** `vienna-memories` (privat). Struktur `trips/<trip-id>/day|family|video|audio/…`
+**F. Buckets (neu, privat):** `vienna-day` (Tagesfotos, nur `image/jpeg`, ≤ 15 MB), `vienna-memories`
+(Familien-Assets: Bilder, Video, Audio). Struktur `trips/<trip-id>/day|family|video|audio/…`.
 
-**G. Realtime:** `vienna.trips, trip_members, uploads, answers, messages, assets` werden der bestehenden Publication
-`supabase_realtime` **hinzugefügt** (nur wenn nicht schon enthalten; bei `FOR ALL TABLES` wird nichts getan). Nichts wird entfernt oder neu erstellt.
+**G. Edge Function (neu):** `vienna-media`. Service Role nur dort; arbeitet ausschließlich mit den beiden Vienna-Buckets
+und Vienna-Pfadmustern (doppelt geprüft: DB + Funktion). CORS nur für `VIENNA_ALLOWED_ORIGINS`.
 
-**Indizes (neu):** `vienna_trip_members_user_idx`, `vienna_messages_trip_idx` (+ Primär-/Unique-Indizes der Vienna-Tabellen).
+**H. Realtime:** `vienna.trips, devices, uploads, answers, messages, assets` werden der bestehenden Publication
+`supabase_realtime` nur **hinzugefügt** (bei `FOR ALL TABLES` passiert nichts). Nichts wird entfernt.
 
-**Rechte:** `grant usage on schema vienna to authenticated`; Execute nur auf Vienna-Funktionen; Spalten-SELECT für
-Admin-Realtime nur auf Vienna-Tabellen (ohne `token_hash`). **Keine** globalen GRANT/REVOKE, keine Default Privileges.
-**Extensions:** keine (SHA-256 und UUIDs sind Postgres-Bordmittel).
+**I. Auth:** **keine Änderung.** Anonymous Sign-ins bleiben aus. Nur manuell: Admin-User anlegen (falls nicht vorhanden)
+und eine Redirect-URL **hinzufügen**.
 
-**H. Auth – manuell (siehe nächster Abschnitt):** anonyme Anmeldung aktivieren (**projektweit!**), Redirect-URL **hinzufügen**,
-Admin-User anlegen. Nichts davon deaktiviert oder ersetzt etwas.
+**J. Wird ein bestehendes Objekt verändert?** **Nein.** Keine fremde Tabelle, Policy, Funktion, kein fremder Bucket,
+Trigger, keine Auth-Einstellung, keine globalen GRANT/REVOKE, keine Default Privileges, kein `DROP … CASCADE` außerhalb
+von `vienna`. Berührungspunkte mit geteilten Systemobjekten sind ausschließlich *Hinzufügungen* (zwei Zeilen in
+`storage.buckets`, vier Policies auf `storage.objects` für die eigenen Buckets, sechs Tabellen in `supabase_realtime`,
+eine neue Edge Function, ein neues Secret).
 
-**I. Wird ein bestehendes Objekt verändert?** **Nein.** Vienna wird rein additiv und isoliert integriert.
-Die einzigen Berührungspunkte mit geteilten Systemobjekten sind *Hinzufügungen*: neue Policies auf `storage.objects`
-(nur für den eigenen Bucket), eine neue Zeile in `storage.buckets`, neue Tabellen in der Publication `supabase_realtime`
-und ein Fremdschlüssel von `vienna.trip_members` auf `auth.users` (ändert `auth.users` nicht).
-
-**J.** entfällt.
-
-**Geprüft** (`supabase/tests/run.sh`, Postgres 16 mit nachgebauten Supabase-Rollen und simulierten fremden Objekten:
-`private.admins`, `private.secret()`, `public.trips`, `public.messages` + Policy, `public.join_trip`, Bucket `avatars`,
-Realtime): fremde Objekte vorher/nachher identisch, Migration 2× ausführbar, Kollisionsschutz bricht in allen drei Fällen
-mit Rollback ab, `supabase/uninstall_vienna_module.sql` stellt den exakten Ausgangszustand wieder her.
-
----
-
-## Auth (bestehendes Supabase Auth bleibt unangetastet)
-
-### 1. Anonyme Anmeldung – ⚠ projektweite Einstellung, vorher prüfen
-Die Eltern brauchen kein Konto; jedes Handy bekommt eine anonyme Session. Dafür muss
-**Authentication → Sign In / Providers → „Allow anonymous sign-ins“** an sein. Das gilt für das **ganze Projekt**:
-anonyme User haben die Rolle `authenticated`. Bestehende Policies anderer Apps, die pauschal `authenticated` erlauben,
-wären danach für jeden erreichbar, der euren (öffentlichen) anon-Key hat.
-
-**Vor dem Aktivieren im SQL-Editor prüfen:**
-```sql
-select schemaname, tablename, policyname, cmd, qual, with_check
-from pg_policies
-where ('authenticated' = any (roles) or 'public' = any (roles))
-  and schemaname <> 'vienna'
-  and coalesce(qual, '') || coalesce(with_check, '') not ilike '%is_anonymous%'
-order by 1, 2;
-```
-Unkritisch sind Policies, die auf den eigenen User einschränken (z. B. `auth.uid() = user_id`) – anonyme User sehen dann
-nur ihre eigenen, leeren Daten. **Kritisch** sind z. B. `using (true)` für `authenticated`. Solche Policies vor dem
-Aktivieren in der jeweiligen App absichern (z. B. `and (auth.jwt()->>'is_anonymous')::boolean is not true`) –
-das ist eine Entscheidung für die andere App und wird hier bewusst **nicht** automatisch gemacht.
-Empfehlung zusätzlich: Authentication → Attack Protection → CAPTCHA bzw. Rate-Limits für anonyme Anmeldungen prüfen.
-
-### 2. Admin
-- Authentication → Users → „Add user“ mit deiner E-Mail (oder vorhandenen User nutzen).
-- `insert into vienna.admins (email) values ('deine@mail.de');` – Vienna-eigene Liste, unabhängig von anderen Apps.
-- Authentication → URL Configuration → **Redirect URLs: `https://<deine-domain>/admin` hinzufügen** (bestehende nicht entfernen,
-  **Site URL nicht ändern**).
-- Login per Magic Link (`/admin`). Der 6-stellige Code im Login-Formular funktioniert nur, wenn das globale
-  Magic-Link-Template `{{ .Token }}` enthält – das Template gilt für alle Apps, daher **optional und bewusst nicht nötig**.
+**Geprüft**
+- `supabase/tests/run.sh` (Postgres 16 + Supabase-Rollen-Stub + simulierte fremde Objekte): fremde Objekte vor/nach
+  Migration identisch (bis auf die genannten Hinzufügungen), Migration 2× ausführbar, Upgrade vom Vorentwurf,
+  Kollisionsschutz in 4 Fällen (Schema, Funktion, Bucket, Policy) mit Rollback, Deinstallation = exakter Ausgangszustand,
+  selbstprüfende Sicherheitstests (ungültige Tokens, fremder Trip, Tickets, Rate-Limit, Rollenrechte, Admin, Reset).
+- `supabase/tests/e2e/stack.sh` (echtes `supabase/postgres`, PostgREST, storage-api, edge-runtime mit `vienna-media`):
+  zwei Geräte, Offline-Foto → Safari zu → online → Upload, Admin sieht Fotos/Geräte, Asset-Upload, Nachricht,
+  PDF, Reset (auch altes zweites Gerät), ungültiger Token, fremder Trip, fremde Origin, direkter Storage-Upload,
+  frei gewählter Pfad, Eltern nie mit `/auth/v1` oder Rolle `authenticated`.
+- `vienna-media`-Logik: `supabase/functions/vienna-media/handler.test.ts` (Vitest).
 
 ---
 
@@ -153,7 +206,7 @@ Empfehlung zusätzlich: Authentication → Attack Protection → CAPTCHA bzw. Ra
 ---
 
 ## Admin-Dashboard (`/admin`)
-Status (Kapitel, Phase, letzter Sync), aktive Geräte, alle Tagesfotos live (Supabase Realtime auf Schema `vienna`
+Login per Magic Link (E-Mail-User + `vienna.admins`). Status (Kapitel, Phase, letzter Sync), Geräte, alle Tagesfotos live (Supabase Realtime auf Schema `vienna`
 + Polling alle 20 s), Antworten, **Nachricht an Mama & Tata** (erscheint beim nächsten Sync ≤ 30 s als „Порука од нас.“),
 **Familien-Assets** (Upload, Vorschau/Play, Ersetzen, Löschen, Details SR/DE/Jahr/Ort/Notiz).
 Ohne Server ansehen (nur Dev/Preview): `/admin?demo=1`.
@@ -174,18 +227,23 @@ npm install && npm run dev
 Debug-Panel: zu jedem Kapitel / Brief / Abschluss / Album / Epilog springen, Fotos + Antworten simulieren,
 „Nur Familienfoto“ (= erste reale Version), „Alle Familienfotos“, Audios, Video, Live-Nachricht, Reset.
 
-DB-Tests: `PGHOST=… PGPORT=… supabase/tests/run.sh` (leeres Postgres 16).
+DB-Tests: `PGHOST=… PGPORT=… supabase/tests/run.sh` (leeres Postgres 15/16, `psql`).
+E2E mit lokalem Supabase-Stack (Docker): `supabase/tests/e2e/stack.sh up && supabase/tests/e2e/stack.sh run`, danach `… down`.
 
 ## Testdaten zurücksetzen
 - Debug-Panel → „Reset alles“ (Fortschritt, Antworten, Nachrichten, Tagesfotos; **Familien-Assets bleiben**).
-- SQL: `select public.vienna_admin_reset_trip('<token>');`, Tagesfotos danach unter Storage → `vienna-memories/trips/<id>/day`.
+  Funktioniert nur, solange die Edge Function `VIENNA_ALLOW_RESET=true` hat.
+- SQL: `select public.vienna_admin_reset_trip('<token>');` – danach Storage → `vienna-day` → `trips/<id>/day` leeren.
+- Andere Testgeräte übernehmen den Reset beim nächsten Öffnen automatisch (`reset_at`).
 
 ## Modul entfernen
-`supabase/uninstall_vienna_module.sql` – entfernt ausschließlich Vienna-Objekte (vorher Dateien im Bucket löschen).
+`supabase/uninstall_vienna_module.sql` – entfernt ausschließlich Vienna-Objekte (vorher Dateien in `vienna-day` und
+`vienna-memories` löschen), danach `supabase functions delete vienna-media --project-ref <PROJECT_REF>` und
+`supabase secrets unset --project-ref <PROJECT_REF> VIENNA_ALLOWED_ORIGINS VIENNA_ALLOW_RESET`.
 
 ## Cloudflare Pages
 Build `npm run build`, Output `dist`, `NODE_VERSION=22`. SPA-Routing ohne `_redirects`.
-`public/_headers`: noindex, CSP (`*.supabase.co` für API, Realtime, signierte Medien), no-referrer.
+`public/_headers`: noindex, CSP (`*.supabase.co` für API, Edge Function, Realtime, signierte Medien), no-referrer.
 
 ## Qualität
 ```bash

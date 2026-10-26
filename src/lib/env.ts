@@ -8,7 +8,8 @@ const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').trim();
 export const env = {
   supabaseUrl: url,
   supabaseAnonKey: anonKey,
-  isSupabaseConfigured: /^https:\/\/.+/.test(url) && anonKey.length > 20,
+  // HTTPS; http nur für lokale Entwicklung (supabase start / lokaler Stack).
+  isSupabaseConfigured: /^(https:\/\/.+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$/.test(url) && anonKey.length > 20,
   /** Debug-Panel: immer im Dev-Server, in Builds nur wenn VITE_ENABLE_DEBUG=true. */
   debugAvailable: import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true',
   isDev: import.meta.env.DEV,

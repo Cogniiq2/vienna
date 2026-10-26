@@ -228,7 +228,36 @@ export class TripStore {
     }
   }
 
+  /**
+   * Nach einem Test-Reset am Server: lokalen Stand verwerfen, der VOR dem Reset entstanden ist –
+   * sonst würde ein altes Testhandy den frischen Trip per monotonem Merge wieder „auffüllen“.
+   * Was offline NACH dem Reset entstand, bleibt erhalten.
+   */
+  private async discardStateBefore(resetAt: string | null): Promise<void> {
+    const cutoff = resetAt ? Date.parse(resetAt) : NaN;
+    if (Number.isNaN(cutoff)) return;
+    const older = (iso: string) => Date.parse(iso) < cutoff;
+    let { progress, progressDirty } = this.local;
+    if (older(progress.updatedAt)) {
+      progress = initialProgress(resetAt ?? undefined);
+      progressDirty = false;
+    }
+    const responses = Object.fromEntries(Object.entries(this.local.responses).filter(([, e]) => e && !older(e.updatedAt)));
+    const dirtyResponses = this.local.dirtyResponses.filter((q) => q in responses);
+    this.local = { ...this.local, progress, progressDirty, responses, dirtyResponses };
+    const photos = { ...this.state.photos };
+    for (const chapterId of CHAPTER_IDS) {
+      const photo = photos[chapterId];
+      if (photo && older(photo.capturedAt)) {
+        await photoStore.remove(this.tripKey, chapterId);
+        delete photos[chapterId];
+      }
+    }
+    this.setState({ photos });
+  }
+
   private async applySnapshot(remote: RemoteSnapshot): Promise<void> {
+    await this.discardStateBefore(remote.resetAt);
     const merged = mergeProgress(this.local.progress, remote.progress);
     const progressDirty = !progressEquals(merged, remote.progress);
 

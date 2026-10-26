@@ -38,6 +38,8 @@ export interface RemoteSnapshot {
   uploads: Partial<Record<ChapterId, RemoteUpload>>;
   messages: LiveMessage[];
   assets: Partial<Record<AssetSlot, RemoteAsset>>;
+  /** Letzter Test-Reset am Server. Ältere lokale Stände werden verworfen. */
+  resetAt: string | null;
 }
 
 export type BackendErrorCode = 'invalid-token' | 'unreachable' | 'not-connected';
