@@ -152,9 +152,9 @@ export const de: Dictionary = {
       pdfLabel: 'Mamas Favorit',
     },
     'tennis.father.food': {
-      title: 'Tata, nach wie viel Zeit fragst du, wann wir essen?',
-      options: { '30': 'Nach einer halben Stunde', set: 'Nach dem ersten Satz', asked: 'Hab ich schon gefragt.' },
-      pdfLabel: 'Tata und das Essen',
+      title: 'Tata, nach wie langer Zeit wirst du fragen, wann wir gehen?',
+      options: { '30': 'Nach einer halben Stunde', set: 'Nach dem ersten Match', asked: 'Ich habe schon gefragt 😁' },
+      pdfLabel: 'Wann gehen wir?',
     },
     'spa.lastDay': {
       title: 'Wann hattet ihr zuletzt einen ganzen Tag nur für euch zwei?',
@@ -223,17 +223,14 @@ export const de: Dictionary = {
       story: [
         'Keine Sorge.',
         'Niemand von euch muss heute einen Rekord brechen.',
-        'Ehrlich gesagt wären wir sogar etwas misstrauisch, wenn ihr es versucht. 😄',
-        'Das ist kein Training. Nur eine kleine Mission, um zu prüfen, ob ihr immer noch ein gutes Team seid.',
+        'Auf keinen Fall verletzen 🙄',
+        'Das ist kein Training. Nur eine kleine Mission, um zu zeigen, dass ihr immer noch ein perfektes Team seid.',
       ],
       tasksTitle: 'Mission',
       tasks: [
         { title: 'Fünf Minuten locker Fahrrad fahren', detail: 'Nur wenn es angenehm ist. Tempo: Sonntagsspaziergang, nicht Tour de France.' },
-        {
-          title: 'Ein bisschen Arme',
-          detail: 'Das leichteste Gerät für die Arme oder einfach ein paar lockere Bewegungen. Einer macht, der andere zählt — dann wird getauscht.',
-        },
-        { title: 'Team-Test', detail: 'Werft euch zehnmal ein Handtuch oder einen Ball zu, ohne ihn fallen zu lassen. Wer ihn fallen lässt, zahlt den Saft.' },
+        { title: 'Insgesamt 30 Wiederholungen mit einer 2,5-kg-Hantel oder mehr.' },
+        { title: 'Team-Test', detail: 'Werft euch zehnmal ein Handtuch oder einen Ball zu, ohne ihn fallen zu lassen, aber bleibt dabei auf einem Bein stehen. Wer ihn fallen lässt, spendiert einen Saft.' },
       ],
       note: 'Alles ist freiwillig und nichts darf wehtun. Mama — das Knie hat das letzte Wort.',
       photo: {
@@ -254,8 +251,8 @@ export const de: Dictionary = {
       story: [
         'Heute gibt es ziemlich viel Tennis.',
         'Mama: gute Nachrichten.',
-        'Tata: Wir versprechen — es gibt auch Sitzplätze, Essen und Pausen.',
-        'Das letzte Mal haben wir zusammen Berrettini und Thiem in Kitzbühel gesehen. Đoković spielt auch heute nicht — wir versuchen, es nicht persönlich zu nehmen.',
+        'Tata: Wir versprechen — es gibt Highlight-Matches.',
+        'Das letzte Mal haben wir zusammen Berrettini und Thiem in Kitzbühel gesehen. Đoković spielt auch heute nicht, trotzdem gibt es heute absolute Banger-Matches.',
       ],
       tasks: [
         { title: 'Genießt die Matches, Seite an Seite.', detail: 'Ihr dürft auch früher gehen. Niemand zählt die Sätze.' },

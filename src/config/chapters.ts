@@ -83,7 +83,7 @@ export const CHAPTERS: readonly ChapterDefinition[] = [
     photo: true,
     capture: 'user',
     info: null,
-    questions: ['morning.firstAwake', 'morning.noWork'],
+    questions: ['morning.firstAwake'],
     taskStyle: 'plain',
     music: 'morning',
   },

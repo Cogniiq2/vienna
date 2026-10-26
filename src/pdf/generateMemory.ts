@@ -544,7 +544,7 @@ export async function generateMemoryPdf(input: MemoryInput): Promise<Blob> {
 /** Kleine, persönliche Notizen auf den Kapitelseiten. */
 function chapterNotes(id: ChapterId, answers: Partial<Record<QuestionId, string>>, t: Dictionary): Array<{ label: string; text: string }> {
   const byChapter: Partial<Record<ChapterId, QuestionId[]>> = {
-    morning: ['morning.firstAwake', 'morning.noWork'],
+    morning: ['morning.firstAwake'],
     tennis: ['tennis.mother.favorite', 'tennis.father.food'],
   };
   return (byChapter[id] ?? [])
