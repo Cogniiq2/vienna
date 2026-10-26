@@ -1,5 +1,5 @@
 import { CHAPTER_IDS, type ChapterId, type QuestionId } from '../config/chapters';
-import { family, type AssetSlot } from '../config/family';
+import { family, PHOTO_SLOTS, type AssetSlot, type PhotoSlot } from '../config/family';
 import type { Language } from '../content';
 import { BackendError, type LiveMessage, type RemoteAsset, type RemoteSnapshot, type TripBackend } from '../lib/backend';
 import { photoStore, toMeta, type PhotoMeta, type StoredPhoto } from '../lib/photoStore';
@@ -314,7 +314,7 @@ export class TripStore {
     const debug = this.debugAssets.get(slot);
     if (debug) return debug;
     const remote = this.state.assets[slot];
-    if (remote && this.backend.mode === 'supabase') {
+    if (remote?.path && this.backend.mode === 'supabase') {
       try {
         return await this.backend.assetUrl(remote.path);
       } catch {
@@ -326,7 +326,21 @@ export class TripStore {
 
   /** Gibt es (vermutlich) ein Asset für diesen Slot? Synchron, für die Darstellung. */
   hasAsset(slot: AssetSlot): boolean {
-    return this.debugAssets.has(slot) || Boolean(this.state.assets[slot]) || Boolean(configuredAssetSrc(slot));
+    return this.debugAssets.has(slot) || Boolean(this.state.assets[slot]?.path) || Boolean(configuredAssetSrc(slot));
+  }
+
+  /**
+   * Bildunterschrift & Co. eines Familienfotos. Priorität: im Admin gepflegt → Default aus family.ts → leer.
+   */
+  getAssetMeta(slot: AssetSlot, lang: Language): { caption: string | null; year: string | null; location: string | null } {
+    const remote = this.state.assets[slot];
+    const fallback = (PHOTO_SLOTS as readonly string[]).includes(slot) ? family.memoryAssets[slot as PhotoSlot] : null;
+    const remoteCaption = lang === 'sr' ? remote?.captionSr : remote?.captionDe;
+    return {
+      caption: remoteCaption || (fallback?.caption ? fallback.caption[lang] : null),
+      year: remote?.year || fallback?.year || null,
+      location: remote?.location || fallback?.location || null,
+    };
   }
 
   /** Asset als Blob (für das PDF). Fehlt es oder schlägt der Download fehl → null, nie ein Fehler. */
@@ -615,7 +629,7 @@ function configuredAssetSrc(slot: AssetSlot): string | null {
   switch (slot) {
     case 'familyVideo':
       return family.familyVideo.src;
-    case 'familyVideoPoster':
+    case 'videoPoster':
       return family.familyVideo.poster;
     case 'audioDjordje':
     case 'audioBogdana':

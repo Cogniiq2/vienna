@@ -21,12 +21,22 @@ const T0 = '2026-10-27T07:00:00.000Z';
 const T1 = '2026-10-27T08:00:00.000Z';
 
 describe('progress', () => {
-  it('starts at the opening with the Gradski Klub memory as first step', () => {
+  it('starts at the opening with breakfast as the first step of Tuesday', () => {
     const p = initialProgress(T0);
     expect(p.phase).toBe('opening');
     expect(currentChapterIndex(p)).toBe(0);
     expect(currentChapterId(p)).toBe('morning');
-    expect(currentStep(p)).toEqual({ kind: 'interlude', id: 'gradskiKlub' });
+    expect(currentStep(p)).toEqual({ kind: 'chapter', id: 'morning' });
+  });
+
+  it('keeps Tuesday free of biographical interludes: five chapters in a row', () => {
+    expect(STORY.map((s) => `${s.kind}:${s.id}`)).toEqual([
+      'chapter:morning',
+      'chapter:mission',
+      'chapter:tennis',
+      'chapter:spa',
+      'chapter:dinner',
+    ]);
   });
 
   it('advances phases only forward', () => {
@@ -36,25 +46,18 @@ describe('progress', () => {
     expect(advancePhase(intro, 'opening')).toBe(intro);
   });
 
-  it('walks memory → chapter → memory → chapter', () => {
+  it('walks chapter by chapter', () => {
     let p = advancePhase(initialProgress(T0), 'journey', T0);
-    p = markSeen(p, seenKey.interlude('gradskiKlub'), T1);
-    expect(currentStep(p)).toEqual({ kind: 'chapter', id: 'morning' });
     p = completeChapter(p, 'morning', T1);
-    expect(currentStep(p)).toEqual({ kind: 'interlude', id: 'wedding' });
+    expect(currentStep(p)).toEqual({ kind: 'chapter', id: 'mission' });
     p = markSeen(p, seenKey.interlude('wedding'), T1);
     expect(currentStep(p)).toEqual({ kind: 'chapter', id: 'mission' });
   });
 
-  it('treats a memory as done when a later chapter is already completed (other phone, old data)', () => {
-    const p = { ...advancePhase(initialProgress(T0), 'journey', T0), completed: ['morning' as const, 'mission' as const] };
-    expect(currentStep(p)).toEqual({ kind: 'interlude', id: 'family' });
-  });
-
   it('completes chapters in canonical order and reaches the finale', () => {
     let p = advancePhase(initialProgress(T0), 'journey', T0);
-    for (const id of ['mission', 'morning', 'vienna', 'tennis', 'spa', 'dinner'] as const) p = completeChapter(p, id, T1);
-    expect(p.completed).toEqual(['morning', 'mission', 'vienna', 'tennis', 'spa', 'dinner']);
+    for (const id of ['mission', 'morning', 'tennis', 'spa', 'dinner'] as const) p = completeChapter(p, id, T1);
+    expect(p.completed).toEqual(['morning', 'mission', 'tennis', 'spa', 'dinner']);
     expect(isComplete(p)).toBe(true);
     expect(p.phase).toBe('finale');
     expect(p.finishedAt).toBe(T1);
@@ -64,19 +67,19 @@ describe('progress', () => {
   it('builds debug progress for any step', () => {
     const atTennis = progressAtStep(stepIndexOfChapter('tennis'), T0);
     expect(currentStep(atTennis)).toEqual({ kind: 'chapter', id: 'tennis' });
-    expect(atTennis.seen).toContain(seenKey.interlude('family'));
-    const end = progressAtStep(STORY.length, T0, [seenKey.finale('more')]);
+    expect(atTennis.completed).toEqual(['morning', 'mission']);
+    const end = progressAtStep(STORY.length, T0, [seenKey.finale('letter')]);
     expect(end.phase).toBe('finale');
-    expect(end.seen).toContain('finale:more');
+    expect(end.seen).toContain('finale:letter');
     expect(currentStepIndex(end)).toBe(STORY.length);
   });
 
   it('merges two devices monotonically, including seen memories', () => {
-    const a = { ...progressAtStep(3, T0), updatedAt: T0 };
-    const b = markSeen({ ...advancePhase(initialProgress(T0), 'intro', T1), completed: ['tennis' as const] }, 'finale:more', T1);
+    const a = markSeen({ ...progressAtStep(1, T0), updatedAt: T0 }, 'finale:letter', T0);
+    const b = markSeen({ ...advancePhase(initialProgress(T0), 'intro', T1), completed: ['tennis' as const] }, 'epilogue:done', T1);
     const merged = mergeProgress(a, b);
     expect(merged.completed).toEqual(['morning', 'tennis']);
-    expect(merged.seen).toEqual(['finale:more', 'interlude:gradskiKlub', 'interlude:wedding']);
+    expect(merged.seen).toEqual(['epilogue:done', 'finale:letter']);
     expect(merged.phase).toBe('journey');
     expect(merged.startedAt).toBe(T0);
     expect(merged.updatedAt).toBe(T1);
@@ -87,10 +90,10 @@ describe('progress', () => {
     expect(normalizeProgress({ phase: 'journey', seen: ['ok:key', 'bad key', 5] })?.seen).toEqual(['ok:key']);
   });
 
-  it('rejects malformed persisted data and drops unknown chapters (e.g. old "pause")', () => {
+  it('rejects malformed persisted data and drops unknown chapters (e.g. old "pause"/"vienna")', () => {
     expect(normalizeProgress(null)).toBeNull();
     expect(normalizeProgress({ phase: 'nope' })).toBeNull();
-    const p = normalizeProgress({ phase: 'journey', completed: ['dinner', 'pause', 'morning'], startedAt: 'bad' });
+    const p = normalizeProgress({ phase: 'journey', completed: ['dinner', 'pause', 'vienna', 'morning'], startedAt: 'bad' });
     expect(p?.completed).toEqual(['morning', 'dinner']);
     expect(p?.startedAt).toBeNull();
     expect(p?.seen).toEqual([]);

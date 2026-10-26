@@ -1,44 +1,54 @@
 /**
- * Alles Persönliche an einem Ort: Namen, Familienfotos, Video, Sprachnachrichten, Musik.
+ * Persönliches an einem Ort: Namen, Defaults für Familien-Assets, Musik.
  *
- * ASSETS (alte Fotos, Video, Audios) – zwei Wege:
- *   1. EMPFOHLEN (privat): im Admin-Dashboard (/admin → „Familien-Assets“) hochladen.
- *      Die Dateien landen im privaten Supabase-Bucket `family` und werden nur per
- *      kurzlebiger, signierter URL an Mitglieder des Trips ausgeliefert. Hier dann nichts eintragen.
- *   2. Lokal / Demo: `src` auf eine URL setzen (z. B. "/family/hochzeit.jpg" in /public).
- *      ACHTUNG: Dateien in /public sind öffentlich abrufbar.
- *   Ein im Dashboard hochgeladenes Asset hat Vorrang vor `src`.
+ * FAMILIEN-ASSETS (Fotos, Video, Audios) kommen aus der DATENBANK:
+ *   /admin → „Familien-Assets“ → Datei hochladen (+ optional Bildunterschrift SR/DE, Jahr, Ort, Notiz).
+ *   Kein Code, kein Commit, kein Redeploy. Dateien liegen privat im Bucket `vienna-memories`.
  *
- * Fehlt ein Asset, wird die jeweilige Stelle einfach ruhig weggelassen – nie ein leerer Rahmen.
+ * Diese Datei liefert nur DEFAULTS. Priorität: Datenbank/Storage → Default hier → ausblenden.
+ *   `src` hier nur für lokale Demos setzen (Dateien in /public sind öffentlich!).
+ *
+ * Fehlt ein Asset, wird die Stelle ruhig weggelassen – nie ein leerer Rahmen, kein „fehlt“ für Mama & Tata.
  * MUSIK: nur Streaming-Links, keine Audiodateien bündeln. Leere Einträge werden nicht angezeigt.
  */
 
 import type { Localized } from './trip';
 
 export type AssetSlot =
+  | 'familyCurrent'
+  | 'parentsCurrent'
   | 'gradskiKlub'
   | 'wedding'
   | 'familyEarly'
-  | 'familyCurrent'
-  | 'parentsNow'
   | 'familyVideo'
-  | 'familyVideoPoster'
+  | 'videoPoster'
   | 'audioDjordje'
   | 'audioBogdana'
   | 'audioLazar';
 
+/** Reihenfolge = Reihenfolge im Admin. Muss mit vienna.assets.slot (Migration) übereinstimmen. */
 export const ASSET_SLOTS: readonly AssetSlot[] = [
+  'familyCurrent',
+  'parentsCurrent',
   'gradskiKlub',
   'wedding',
   'familyEarly',
-  'familyCurrent',
-  'parentsNow',
   'familyVideo',
-  'familyVideoPoster',
+  'videoPoster',
   'audioDjordje',
   'audioBogdana',
   'audioLazar',
 ];
+
+export type PhotoSlot = 'familyCurrent' | 'parentsCurrent' | 'gradskiKlub' | 'wedding' | 'familyEarly';
+export const PHOTO_SLOTS: readonly PhotoSlot[] = ['familyCurrent', 'parentsCurrent', 'gradskiKlub', 'wedding', 'familyEarly'];
+
+/** Welche Art Datei gehört in welchen Slot (Upload-Filter + Storage-Ordner). */
+export function slotKind(slot: AssetSlot): 'image' | 'video' | 'audio' {
+  if (slot === 'familyVideo') return 'video';
+  if (slot.startsWith('audio')) return 'audio';
+  return 'image';
+}
 
 export interface MemoryAsset {
   /** Optionaler direkter Pfad/URL (nur für Demo/Tests). Sonst im Admin-Dashboard hochladen. */
@@ -71,7 +81,7 @@ export interface FamilyConfig {
     father: { name: Localized; call: Localized };
   };
   children: Array<{ id: 'djordje' | 'bogdana' | 'lazar'; name: Localized }>;
-  memoryAssets: Record<'gradskiKlub' | 'wedding' | 'familyEarly' | 'familyCurrent' | 'parentsNow', MemoryAsset>;
+  memoryAssets: Record<PhotoSlot, MemoryAsset>;
   familyVideo: {
     src: string | null;
     poster: string | null;
@@ -97,16 +107,14 @@ export const family: FamilyConfig = {
     { id: 'lazar', name: { sr: 'Лазар', de: 'Lazar' } },
   ],
 
+  // Defaults – im Admin gepflegte Bildunterschriften/Jahre/Orte haben Vorrang.
   memoryAssets: {
-    // Ihr erstes gemeinsames Café. year/location ergänzen, wenn bekannt (z. B. year: '1989').
+    familyCurrent: asset(),
+    // Fehlt dieses Foto, wird für „ви сте Милица и Милош.“ das heutige Dinner-Foto verwendet.
+    parentsCurrent: asset(),
     gradskiKlub: asset({ sr: 'Градски клуб', de: 'Gradski Klub' }),
     wedding: asset(),
-    // Kinder klein / gemeinsamer Urlaub
     familyEarly: asset(),
-    // Eltern + drei Kinder heute
-    familyCurrent: asset(),
-    // Optional: aktuelles Foto nur von Mama & Tata. Fehlt es, wird das heutige Dinner-Foto verwendet.
-    parentsNow: asset(),
   },
 
   familyVideo: {

@@ -13,7 +13,7 @@ const token = randomBytes(24).toString('base64url');
 console.log(`
 1) Im Supabase SQL-Editor ausführen:
 
-   select public.create_trip('${token}', 'Mama & Papa · Wien 27.10.2026');
+   select public.vienna_create_trip('${token}', 'Mama & Tata · Wien 27.10.2026');
 
 2) Privater Link für Mama & Papa:
 

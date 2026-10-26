@@ -11,7 +11,6 @@ export const de: Dictionary = {
   common: {
     dateShort: '27 · 10 · 2026',
     dateLong: '27. Oktober 2026',
-    city: 'Wien',
     languageLabel: 'Sprache',
     switchTo: 'Auf Deutsch umstellen',
     footer: 'In Liebe,',
@@ -63,7 +62,6 @@ export const de: Dictionary = {
     reviewBack: 'Zurück zum aktuellen Kapitel',
     reviewing: 'Eure Erinnerung',
     timeLabel: (time) => `gegen ${time}`,
-    toChapter: (roman) => `Kapitel ${roman}`,
   },
   interludes: {
     gradskiKlub: [
@@ -248,37 +246,6 @@ export const de: Dictionary = {
         text: 'Kein Rekord wurde gebrochen. Aber das Team ist immer noch da.',
       },
     },
-    vienna: {
-      eyebrow: 'Wien',
-      title: 'Ein Tag in Wien.',
-      story: ['Heute müssen wir nicht ganz Wien sehen.', 'Nur genug, um es nicht zu vergessen.'],
-      facts: [
-        {
-          title: 'Schönbrunn',
-          text: 'Die Sommerresidenz der Habsburger, ein paar Minuten von eurem Hotel. 1.441 Zimmer. Hier soll der sechsjährige Mozart 1762 für Kaiserin Maria Theresia gespielt haben.',
-        },
-        {
-          title: 'Musik',
-          text: 'Mozart, Haydn, Schubert, Strauss. Und Beethoven, der in Wien über sechzig Mal umgezogen ist. Wir würden sagen: Der Mann hat sich ernsthaft Wohnungen angeschaut.',
-        },
-        {
-          title: 'Wiener Kaffeehäuser',
-          text: 'Die Wiener Kaffeehauskultur steht seit 2011 im österreichischen Verzeichnis des immateriellen UNESCO-Kulturerbes. Wir wissen, ihr seid keine Kaffeetrinker. Muss auch nicht — Kuchen, Tee oder einfach ein Blick aus dem Fenster gehen genauso.',
-        },
-      ],
-      tasks: [
-        {
-          title: 'Ein kurzer Spaziergang nach Schönbrunn',
-          detail: 'Ehrenhof, ein Stück Park und zurück. Zur Gloriette auf den Hügel müsst ihr nicht — der Weg ist steiler, als er aussieht.',
-        },
-      ],
-      completeCta: 'Wir haben genug gesehen',
-      saved: 'Wien ist gespeichert.',
-      pdf: {
-        title: 'Ein Tag in Wien',
-        text: 'Nicht ganz Wien. Nur so viel, wie man braucht, um es nicht zu vergessen.',
-      },
-    },
     tennis: {
       eyebrow: 'Die große Überraschung',
       reveal: 'Vienna Open',
@@ -353,7 +320,7 @@ export const de: Dictionary = {
     dismiss: 'Gelesen',
   },
   finale: {
-    more: { title: 'Wir haben noch etwas.', cta: 'Weiter' },
+    title: 'Wir haben noch etwas.',
     letter: {
       salutation: 'Mama und Tata,',
       opening: [
@@ -368,23 +335,7 @@ export const de: Dictionary = {
       ],
       closing: 'Nur euretwegen.',
     },
-    video: { title: 'Wir haben euch etwas aufgenommen.', play: 'Abspielen.', transcript: 'Text zum Video' },
-    voices: {
-      title: 'Und jeder von uns hat noch etwas zu sagen.',
-      play: 'Abspielen',
-      pause: 'Anhalten',
-      transcript: 'Text der Nachricht',
-      progress: 'Fortschritt der Nachricht',
-    },
-    bonusIntro: { title: 'Noch etwas.', subtitle: 'Nur für euch zwei.', cta: 'Öffnen' },
-    bonus: [
-      { asset: 'gradskiKlub', lines: ['Vor vielen Jahren wart ihr nur ihr zwei.'] },
-      { asset: 'wedding', lines: [] },
-      { asset: 'familyEarly', lines: ['Dann wurdet ihr Mama und Tata.'] },
-      { lines: ['Und seitdem habt ihr einen großen Teil eures Lebens für uns gebaut.'], size: 'lg' },
-      { lines: ['Heute wollten wir euch an etwas erinnern.'], size: 'md' },
-      { lines: ['Vor all dem …'], size: 'lg' },
-      { asset: 'parentsToday', lines: ['seid ihr Milica und Miloš.'], size: 'lg' },
+    closing: [
       { lines: [MOTIF], size: 'xl' },
       { lines: ['Wisst ihr, wie sehr wir euch lieben?'], size: 'lg' },
       { asset: 'familyCurrent', lines: ['Danke für alles.'], size: 'lg' },
@@ -399,14 +350,53 @@ export const de: Dictionary = {
       memoryTitle: 'Eure Erinnerung.',
       memoryText: 'Ein kleines Album eures Tages — zum Aufbewahren und Durchblättern, auch in zehn Jahren noch.',
       memoryCta: 'Unsere Erinnerung erstellen',
+      storyEyebrow: 'Aus dem Familienalbum',
+      storyTitle: 'Eure Geschichte.',
+      storyText: 'Ein paar Seiten, die wir für euch aufgehoben haben.',
       epilogueEyebrow: 'Epilog',
       epilogueTitle: 'Noch ein bisschen Wien.',
     },
+  },
+  familyStory: {
+    eyebrow: 'Aus dem Familienalbum',
+    video: { title: 'Wir haben euch etwas aufgenommen.', play: 'Abspielen.', transcript: 'Text zum Video' },
+    voices: {
+      title: 'Und jeder von uns hat noch etwas zu sagen.',
+      play: 'Abspielen',
+      pause: 'Anhalten',
+      transcript: 'Text der Nachricht',
+      progress: 'Fortschritt der Nachricht',
+    },
+    ending: [
+      { lines: ['Heute wollten wir euch an etwas erinnern.'], size: 'md' },
+      { lines: ['Vor all dem …'], size: 'lg' },
+      { asset: 'parentsToday', lines: ['seid ihr Milica und Miloš.'], size: 'lg' },
+      { lines: [], signature: true },
+    ],
+    back: 'Zurück zu eurem Tag',
   },
   epilogue: {
     eyebrow: 'Epilog',
     title: 'Noch ein bisschen Wien.',
     lines: ['Keine Missionen. Keine Fotos.', 'Nur noch ein bisschen Wien vor der Heimfahrt — so viel ihr mögt, und keinen Schritt mehr.'],
+    facts: [
+      {
+        title: 'Schönbrunn',
+        text: 'Die Sommerresidenz der Habsburger, ein paar Minuten von eurem Hotel. 1.441 Zimmer. Hier soll der sechsjährige Mozart 1762 für Kaiserin Maria Theresia gespielt haben.',
+      },
+      {
+        title: 'Musik',
+        text: 'Mozart, Haydn, Schubert, Strauss. Und Beethoven, der in Wien über sechzig Mal umgezogen ist. Wir würden sagen: Der Mann hat sich ernsthaft Wohnungen angeschaut.',
+      },
+      {
+        title: 'Wiener Kaffeehäuser',
+        text: 'Die Wiener Kaffeehauskultur steht seit 2011 im österreichischen Verzeichnis des immateriellen UNESCO-Kulturerbes. Wir wissen, ihr seid keine Kaffeetrinker. Muss auch nicht — Kuchen, Tee oder einfach ein Blick aus dem Fenster gehen genauso.',
+      },
+    ],
+    walk: {
+      title: 'Ein kurzer Spaziergang nach Schönbrunn',
+      detail: 'Ehrenhof, ein Stück Park und zurück. Zur Gloriette auf den Hügel müsst ihr nicht — der Weg ist steiler, als er aussieht.',
+    },
     locationsTitle: 'Wenn euch nach Spazieren ist',
     update: 'Erinnerung aktualisieren',
     updateHint: 'Eure Antwort kommt mit ins Album.',

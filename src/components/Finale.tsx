@@ -1,30 +1,30 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { seenKey, type FinaleStage } from '../config/chapters';
 import { useLanguage } from '../i18n/context';
+import { nextFinaleStage } from '../lib/frames';
 import { useTripState, useTripStore } from '../state/context';
 import { Epilogue } from './Epilogue';
+import { FamilyStory } from './FamilyStory';
 import { FinaleHome } from './FinaleHome';
 import { ArrowIcon } from './Icons';
-import { hasFamilyMedia, nextFinaleStage } from '../lib/frames';
-import { ChildrenVoices, FamilyVideo } from './MediaPlayers';
 import { MusicCard } from './MusicCard';
 import { Reveal } from './Reveal';
 import { StorySequence } from './StorySequence';
 
-type View = { kind: 'flow' } | { kind: 'home' } | { kind: 'replay' } | { kind: 'epilogue' };
+type View = 'flow' | 'home' | 'replay' | 'story' | 'epilogue';
 
 /**
- * Nach dem letzten Kapitel: „Имамо још нешто.“ → Brief → Video & Stimmen → Bonus „Само за вас двоје.“
- * → „Ваш дан.“ (Album, PDF, später Epilog). Jede Station wird gemerkt.
+ * Ende des Dienstags: „Имамо још нешто.“ + Brief → kurzer, stiller Abschluss („Јел’ знате?“ …
+ * dezent mit dem aktuellen Familienfoto) → „Ваш дан.“. Die Familiengeschichte ist ein eigener,
+ * späterer Bereich und erscheint erst, wenn dafür Fotos/Medien hochgeladen sind.
  */
 export function Finale({ onImmersive }: { onImmersive: (on: boolean) => void }) {
+  const { t } = useLanguage();
   const store = useTripStore();
   const { progress } = useTripState();
-  const mediaAvailable = hasFamilyMedia((s) => store.hasAsset(s));
-  const stage = nextFinaleStage(progress.seen, mediaAvailable);
-
-  const [view, setView] = useState<View>({ kind: 'flow' });
-  const immersive = (view.kind === 'flow' && stage === 'bonus') || view.kind === 'replay';
+  const stage = nextFinaleStage(progress.seen);
+  const [view, setView] = useState<View>('flow');
+  const immersive = (view === 'flow' && stage === 'closing') || view === 'replay' || view === 'story';
 
   useEffect(() => {
     onImmersive(immersive);
@@ -34,33 +34,40 @@ export function Finale({ onImmersive }: { onImmersive: (on: boolean) => void }) 
   const complete = useCallback(
     (s: FinaleStage) => {
       store.markSeen(seenKey.finale(s));
-      if (s === 'more' && !mediaAvailable) store.markSeen(seenKey.finale('messages'));
       window.scrollTo({ top: 0 });
     },
-    [store, mediaAvailable],
+    [store],
   );
 
   const toHome = useCallback(() => {
-    setView({ kind: 'home' });
+    setView('home');
     window.scrollTo({ top: 0 });
   }, []);
 
-  if (view.kind === 'replay') return <Bonus onDone={toHome} />;
-  if (view.kind === 'epilogue') return <Epilogue onBack={toHome} />;
-  if (view.kind === 'flow' && stage === 'more') return <More onDone={() => complete('more')} />;
-  if (view.kind === 'flow' && stage === 'messages') return <Messages onDone={() => complete('messages')} />;
-  if (view.kind === 'flow' && stage === 'bonus') return <Bonus onDone={() => complete('bonus')} />;
-  return <FinaleHome onReplay={() => setView({ kind: 'replay' })} onEpilogue={() => setView({ kind: 'epilogue' })} />;
+  if (view === 'replay') return <StorySequence frames={t.finale.closing} onDone={toHome} immersive />;
+  if (view === 'story') return <FamilyStory onDone={toHome} />;
+  if (view === 'epilogue') return <Epilogue onBack={toHome} />;
+  if (view === 'flow' && stage === 'letter') return <Letter onDone={() => complete('letter')} />;
+  if (view === 'flow' && stage === 'closing') {
+    return <StorySequence frames={t.finale.closing} onDone={() => complete('closing')} immersive />;
+  }
+  return (
+    <FinaleHome
+      onReplay={() => setView('replay')}
+      onStory={() => setView('story')}
+      onEpilogue={() => setView('epilogue')}
+    />
+  );
 }
 
-function More({ onDone }: { onDone: () => void }) {
+function Letter({ onDone }: { onDone: () => void }) {
   const { t } = useLanguage();
   const { letter } = t.finale;
   return (
-    <section className="story finale" aria-labelledby="more-title">
+    <section className="story finale" aria-labelledby="letter-title">
       <div className="story__screen story__screen--center">
-        <h1 id="more-title" className="display finale__more reveal-blur" style={{ '--d': '400ms' } as CSSProperties}>
-          {t.finale.more.title}
+        <h1 id="letter-title" className="display finale__more reveal-blur" style={{ '--d': '400ms' } as CSSProperties}>
+          {t.finale.title}
         </h1>
       </div>
 
@@ -97,7 +104,7 @@ function More({ onDone }: { onDone: () => void }) {
         <Reveal>
           <div className="page__action">
             <button type="button" className="btn btn--primary btn--large" onClick={onDone}>
-              <span>{t.finale.more.cta}</span>
+              <span>{t.common.next}</span>
               <ArrowIcon size={18} />
             </button>
           </div>
@@ -105,46 +112,4 @@ function More({ onDone }: { onDone: () => void }) {
       </div>
     </section>
   );
-}
-
-function Messages({ onDone }: { onDone: () => void }) {
-  const { t } = useLanguage();
-  return (
-    <section className="story finale finale--media">
-      <div className="story__screen">
-        <FamilyVideo />
-      </div>
-      <div className="story__screen">
-        <ChildrenVoices />
-        <div className="page__action">
-          <button type="button" className="btn btn--primary btn--large" onClick={onDone}>
-            <span>{t.common.next}</span>
-            <ArrowIcon size={18} />
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Bonus({ onDone }: { onDone: () => void }) {
-  const { t } = useLanguage();
-  const [started, setStarted] = useState(false);
-  if (!started) {
-    return (
-      <section className="bonus-intro" aria-labelledby="bonus-title">
-        <h1 id="bonus-title" className="display reveal-blur" style={{ '--d': '300ms' } as CSSProperties}>
-          {t.finale.bonusIntro.title}
-        </h1>
-        <p className="serif-lead reveal" style={{ '--d': '1300ms' } as CSSProperties}>
-          {t.finale.bonusIntro.subtitle}
-        </p>
-        <button type="button" className="sequence__next reveal" style={{ '--d': '2200ms' } as CSSProperties} onClick={() => setStarted(true)}>
-          <span>{t.finale.bonusIntro.cta}</span>
-          <ArrowIcon size={16} />
-        </button>
-      </section>
-    );
-  }
-  return <StorySequence frames={t.finale.bonus} onDone={onDone} immersive />;
 }

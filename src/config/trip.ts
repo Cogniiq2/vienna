@@ -42,7 +42,7 @@ export interface TripConfig {
     gymNotes: LocalizedOrPlain | null;
     spaNotes: LocalizedOrPlain | null;
   };
-  /** Kapitel III: kurzer Weg vom Hotel (Navigation „Покажи пут“). */
+  /** Epilog: kurzer Weg vom Hotel nach Schönbrunn (Navigation „Покажи пут“). */
   viennaWalk: {
     destination: Place;
     /** Startpunkt der Route; null = aktueller Standort. */
@@ -72,7 +72,7 @@ export interface TripConfig {
     navigationUrl: string | null;
     notes: LocalizedOrPlain | null;
   };
-  chapterTimes: Record<'morning' | 'mission' | 'vienna' | 'tennis' | 'spa' | 'dinner', string | null>;
+  chapterTimes: Record<'morning' | 'mission' | 'tennis' | 'spa' | 'dinner', string | null>;
   epilogue: {
     /** Ab wann der Epilog erscheint (ISO mit Offset). 28.10. morgens Wiener Zeit (MEZ, +01:00). */
     availableFrom: string;
@@ -127,7 +127,6 @@ export const trip: TripConfig = {
   chapterTimes: {
     morning: null,
     mission: null,
-    vienna: null,
     tennis: null,
     spa: null,
     dinner: null,

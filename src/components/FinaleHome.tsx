@@ -1,15 +1,28 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { useLanguage } from '../i18n/context';
 import { isEpilogueAvailable } from '../lib/epilogue';
+import { hasFamilyStory } from '../lib/frames';
+import { useTripState, useTripStore } from '../state/context';
 import { ArrowIcon } from './Icons';
 import { Gallery } from './Gallery';
 import { MemoryGenerator } from './MemoryGenerator';
 
 /** „Ваш дан.“ – Album, Erinnerungs-PDF und (ab Mittwochmorgen) der Epilog. */
-export function FinaleHome({ onReplay, onEpilogue }: { onReplay: () => void; onEpilogue: () => void }) {
+export function FinaleHome({
+  onReplay,
+  onStory,
+  onEpilogue,
+}: {
+  onReplay: () => void;
+  onStory: () => void;
+  onEpilogue: () => void;
+}) {
   const { t } = useLanguage();
   const [creating, setCreating] = useState(false);
+  const store = useTripStore();
+  useTripState(); // neu bewerten, sobald neue Familien-Assets vom Server kommen
   const epilogue = isEpilogueAvailable();
+  const story = hasFamilyStory((s) => store.hasAsset(s));
   const home = t.finale.home;
 
   // PDF-Bibliothek und Schriften schon im Hintergrund laden.
@@ -37,6 +50,15 @@ export function FinaleHome({ onReplay, onEpilogue }: { onReplay: () => void; onE
       </header>
 
       <Gallery />
+
+      {story && (
+        <button type="button" className="story-teaser" onClick={onStory}>
+          <span className="eyebrow eyebrow--accent">{home.storyEyebrow}</span>
+          <span className="story-teaser__title">{home.storyTitle}</span>
+          <span className="small-text">{home.storyText}</span>
+          <ArrowIcon size={18} />
+        </button>
+      )}
 
       <div className="finale-home__memory">
         <span className="rule" aria-hidden="true" />

@@ -33,4 +33,13 @@ export async function callRpc(sb: SupabaseClient, fn: string, args: Record<strin
   return { data: res.data as unknown, error: res.error };
 }
 
-export const BUCKETS = { photos: 'memories', family: 'family' } as const;
+/** Eigener privater Bucket des Vienna-Moduls (kein fremder Bucket wird benutzt). */
+export const BUCKET = 'vienna-memories';
+
+/** Storage-Pfade – müssen zu den Policies der Migration passen. */
+export const storagePaths = {
+  dayPhoto: (tripId: string, chapterId: string, unique: string) => `trips/${tripId}/day/${chapterId}-${unique}.jpg`,
+  dayFolder: (tripId: string) => `trips/${tripId}/day`,
+  asset: (tripId: string, kind: 'image' | 'video' | 'audio', slot: string, unique: string, ext: string) =>
+    `trips/${tripId}/${kind === 'image' ? 'family' : kind}/${slot}-${unique}.${ext}`,
+};

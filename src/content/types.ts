@@ -14,7 +14,7 @@ export interface TaskItem {
 }
 
 /** Bildquelle eines Story-Frames: ein Familien-Asset oder ein heutiges Foto der Eltern. */
-export type FrameAsset = Exclude<AssetSlot, 'familyVideo' | 'familyVideoPoster' | 'audioDjordje' | 'audioBogdana' | 'audioLazar'> | 'parentsToday';
+export type FrameAsset = Exclude<AssetSlot, 'familyVideo' | 'videoPoster' | 'audioDjordje' | 'audioBogdana' | 'audioLazar'> | 'parentsToday';
 
 /** Eine „Seite“ einer Erinnerungssequenz. */
 export interface StoryFrame {
@@ -35,8 +35,6 @@ export interface ChapterContent {
   /** Kurze Zeilen der Geschichte (eigener Screen). */
   story: string[];
   storyClose?: string;
-  /** Kleine Wien-Geschichten. */
-  facts?: Array<{ title: string; text: string }>;
   /** Die Regel beim Dinner. */
   rule?: { intro: string; items: string[]; punchline: string };
   toast?: string;
@@ -64,7 +62,6 @@ export interface Dictionary {
   common: {
     dateShort: string;
     dateLong: string;
-    city: string;
     languageLabel: string;
     switchTo: string;
     footer: string;
@@ -102,7 +99,6 @@ export interface Dictionary {
     reviewBack: string;
     reviewing: string;
     timeLabel: (time: string) => string;
-    toChapter: (roman: string) => string;
   };
   interludes: Record<InterludeId, StoryFrame[]>;
   photo: {
@@ -156,13 +152,11 @@ export interface Dictionary {
   music: { title: string; hint: string; spotify: string; apple: string; youtube: string };
   chapters: Record<ChapterId, ChapterContent>;
   messages: { eyebrow: string; dismiss: string };
+  /** Ende des Dienstags: Brief, dann ein kurzer, stiller Abschluss. */
   finale: {
-    more: { title: string; cta: string };
+    title: string;
     letter: { salutation: string; opening: string[]; emphasis: string; list: string[]; after: string[]; closing: string };
-    video: { title: string; play: string; transcript: string };
-    voices: { title: string; play: string; pause: string; transcript: string; progress: string };
-    bonusIntro: { title: string; subtitle: string; cta: string };
-    bonus: StoryFrame[];
+    closing: StoryFrame[];
     signature: string;
     home: {
       title: string;
@@ -172,14 +166,27 @@ export interface Dictionary {
       memoryTitle: string;
       memoryText: string;
       memoryCta: string;
+      storyEyebrow: string;
+      storyTitle: string;
+      storyText: string;
       epilogueEyebrow: string;
       epilogueTitle: string;
     };
+  };
+  /** Familiengeschichte („Ваша прича.“) – getrennt vom Dienstag, erscheint erst, wenn Fotos/Medien da sind. */
+  familyStory: {
+    eyebrow: string;
+    video: { title: string; play: string; transcript: string };
+    voices: { title: string; play: string; pause: string; transcript: string; progress: string };
+    ending: StoryFrame[];
+    back: string;
   };
   epilogue: {
     eyebrow: string;
     title: string;
     lines: string[];
+    facts: Array<{ title: string; text: string }>;
+    walk: TaskItem;
     locationsTitle: string;
     update: string;
     updateHint: string;

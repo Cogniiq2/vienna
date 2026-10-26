@@ -129,11 +129,11 @@ describe('TripStore', () => {
 
   it('adopts progress from the other parent’s phone on a fresh device', async () => {
     const backend = new FakeBackend();
-    backend.progress = progressAtStep(stepIndexOfChapter('vienna') + 1);
+    backend.progress = progressAtStep(stepIndexOfChapter('tennis') + 1);
     backend.uploads.morning = { path: 'trip/morning-x.jpg', capturedAt: new Date().toISOString() };
     const store = new TripStore(nextToken(), backend);
     await store.init();
-    expect(store.getState().progress.completed).toEqual(['morning', 'mission', 'vienna']);
+    expect(store.getState().progress.completed).toEqual(['morning', 'mission', 'tennis']);
     expect(store.getState().photos.morning).toMatchObject({ status: 'remote', hasLocal: false });
     expect(await store.getPhotoBlob('morning')).toBeInstanceOf(Blob);
     store.dispose();
@@ -199,15 +199,21 @@ describe('TripStore', () => {
 
   it('resolves private family assets via signed URLs and never fails for missing ones', async () => {
     const backend = new FakeBackend();
-    const wedding: RemoteAsset = { slot: 'wedding', path: 'trip/wedding-1.jpg', mime: 'image/jpeg' };
-    backend.assets = { wedding };
+    const meta = { captionSr: null, captionDe: null, year: null, location: null, note: null, updatedAt: null };
+    const wedding: RemoteAsset = { slot: 'wedding', path: 'trip/wedding-1.jpg', mime: 'image/jpeg', ...meta };
+    const gradskiKlub: RemoteAsset = { slot: 'gradskiKlub', path: null, mime: null, ...meta, captionSr: 'Градски клуб, Ниш', year: '1989' };
+    backend.assets = { wedding, gradskiKlub };
     const store = new TripStore(nextToken(), backend);
     await store.init();
     expect(store.hasAsset('wedding')).toBe(true);
     expect(await store.getAssetUrl('wedding')).toContain('signed.example/trip/wedding-1.jpg');
+    // Nur Metadaten, noch keine Datei → nicht vorhanden, aber Bildunterschrift aus der DB hat Vorrang.
     expect(store.hasAsset('gradskiKlub')).toBe(false);
     expect(await store.getAssetUrl('gradskiKlub')).toBeNull();
     expect(await store.getAssetBlob('gradskiKlub')).toBeNull();
+    expect(store.getAssetMeta('gradskiKlub', 'sr')).toEqual({ caption: 'Градски клуб, Ниш', year: '1989', location: null });
+    expect(store.getAssetMeta('gradskiKlub', 'de').caption).toBe('Gradski Klub');
+    expect(store.hasAsset('familyCurrent')).toBe(false);
     store.dispose();
   });
 

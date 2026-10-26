@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
-# Führt beide Migrationen + Sicherheitstests gegen ein lokales, leeres Postgres 16 aus.
+# Prüft das Vienna-Modul gegen ein lokales, leeres Postgres 16:
+#  1. legt simulierte FREMDE Produktivobjekte an (foreign_objects.sql)
+#  2. führt die Migration zweimal aus (Idempotenz)
+#  3. vergleicht die fremden Objekte vorher/nachher (muss identisch sein, bis auf Vienna-Ergänzungen)
+#  4. führt die Sicherheitstests aus
 #   PGHOST=/pfad/zum/socket PGPORT=5499 ./supabase/tests/run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 DB=vienna_test_$$
-psql -U postgres -q -c "create database $DB"
-trap 'psql -U postgres -q -c "drop database $DB"' EXIT
-psql -U postgres -q -d "$DB" -v ON_ERROR_STOP=1 -f supabase_stub.sql
-psql -U postgres -q -d "$DB" -v ON_ERROR_STOP=1 -f ../migrations/20261024000000_vienna_gift.sql
-psql -U postgres -q -d "$DB" -v ON_ERROR_STOP=1 -f ../migrations/20261025000000_story_admin_messages.sql
-psql -U postgres -d "$DB" -f security_test.sql
+PSQL="psql -U postgres -q -X"
+$PSQL -c "create database $DB"
+trap '$PSQL -c "drop database $DB"' EXIT
+$PSQL -d "$DB" -v ON_ERROR_STOP=1 -f supabase_stub.sql >/dev/null
+$PSQL -d "$DB" -v ON_ERROR_STOP=1 -f foreign_objects.sql
+$PSQL -d "$DB" -tA -f foreign_snapshot.sql > /tmp/vienna_before.txt
+$PSQL -d "$DB" -v ON_ERROR_STOP=1 -f ../migrations/20261026000000_vienna_module.sql 2>/dev/null
+$PSQL -d "$DB" -v ON_ERROR_STOP=1 -f ../migrations/20261026000000_vienna_module.sql 2>/dev/null
+$PSQL -d "$DB" -tA -f foreign_snapshot.sql > /tmp/vienna_after.txt
+echo "=== Fremde Objekte vorher/nachher (nur hinzugefügte Vienna-Policies/Realtime-Tabellen erlaubt):"
+diff /tmp/vienna_before.txt /tmp/vienna_after.txt || true
+echo "=== Sicherheitstests"
+$PSQL -d "$DB" -f security_test.sql

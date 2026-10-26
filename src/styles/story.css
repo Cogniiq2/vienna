@@ -1383,3 +1383,138 @@ textarea.line-input {
   overflow-wrap: break-word;
   hyphens: manual;
 }
+
+/* Einstieg in die Familiengeschichte („Ваша прича.“) */
+.story-teaser {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem 1rem;
+  align-items: center;
+  margin-top: 3.5rem;
+  padding: 1.5rem 1.25rem;
+  text-align: left;
+  background: var(--paper);
+  border: 1px solid rgba(179, 154, 114, 0.35);
+  border-radius: var(--radius);
+}
+
+.story-teaser > :not(svg) {
+  grid-column: 1;
+}
+
+.story-teaser__title {
+  font-family: var(--font-serif);
+  font-size: 2rem;
+  line-height: 1.1;
+}
+
+.story-teaser svg {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  color: var(--accent-ink);
+}
+
+/* Admin: Familien-Assets */
+.admin__assets-card {
+  grid-column: 1 / -1;
+}
+
+.asset-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.asset {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: 1rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.asset__preview {
+  width: 6rem;
+  height: 6rem;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--sand);
+}
+
+.asset__preview--empty {
+  background: repeating-linear-gradient(135deg, var(--ivory-deep) 0 6px, var(--sand) 6px 7px);
+}
+
+.asset__audio {
+  width: 100%;
+  grid-column: 1 / -1;
+  order: 2;
+}
+
+.asset__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.asset__title {
+  font-weight: 600;
+}
+
+.asset__title small[data-ok='true'] {
+  color: #4f8a5b;
+  font-weight: 500;
+}
+
+.asset__title small[data-ok='false'] {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.asset__meta summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--accent-ink);
+  min-height: 2.25rem;
+  display: flex;
+  align-items: center;
+}
+
+.asset__meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.6rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.admin input[type='text'] {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  font-size: 0.9375rem;
+}
+
+@media (max-width: 30rem) {
+  .asset {
+    grid-template-columns: 1fr;
+  }
+  .asset__preview {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 4 / 3;
+  }
+}
+
+/* Upload-Buttons sind <label> – nicht die graue Formular-Label-Optik erben */
+.admin label.admin__btn {
+  flex-direction: row;
+  font-size: 0.875rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.admin label.admin__btn--primary {
+  color: var(--ivory);
+}

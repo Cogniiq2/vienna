@@ -1,3 +1,4 @@
+import type { AssetSlot } from '../config/family';
 import type { SnapshotRow } from '../lib/backend/supabaseBackend';
 
 export interface AdminMember {
@@ -13,22 +14,44 @@ export interface AdminUpload {
   uploaded_at: string;
 }
 
-export interface AdminTrip extends SnapshotRow {
+export interface AdminAsset {
+  slot: string;
+  path: string | null;
+  mime: string | null;
+  caption_sr?: string | null;
+  caption_de?: string | null;
+  year?: string | null;
+  location?: string | null;
+  note?: string | null;
+  updated_at?: string | null;
+}
+
+export interface AdminTrip extends Omit<SnapshotRow, 'uploads' | 'assets'> {
   label: string | null;
   created_at: string;
   current_chapter: number;
   members: AdminMember[];
-  uploads_detail: AdminUpload[];
+  uploads: AdminUpload[];
+  assets: AdminAsset[];
+}
+
+export interface AssetMetaInput {
+  captionSr: string;
+  captionDe: string;
+  year: string;
+  location: string;
+  note: string;
 }
 
 export interface AdminApi {
   overview(): Promise<AdminTrip[]>;
-  signedPhotoUrls(paths: string[]): Promise<Record<string, string>>;
-  signedAssetUrl(path: string): Promise<string | null>;
+  /** Signierte, kurzlebige URLs (privater Bucket) für Tagesfotos und Familien-Assets. */
+  signedUrls(paths: string[]): Promise<Record<string, string>>;
   sendMessage(tripId: string, body: string, heart: boolean): Promise<void>;
   deleteMessage(id: string): Promise<void>;
-  uploadAsset(tripId: string, slot: string, file: File): Promise<void>;
-  removeAsset(tripId: string, slot: string): Promise<void>;
-  /** Live-Updates (Supabase Realtime). Gibt eine Abmeldefunktion zurück. */
+  uploadAsset(tripId: string, slot: AssetSlot, file: File): Promise<void>;
+  updateAssetMeta(tripId: string, slot: AssetSlot, meta: AssetMetaInput): Promise<void>;
+  removeAsset(tripId: string, slot: AssetSlot): Promise<void>;
+  /** Live-Updates (Supabase Realtime auf dem Schema `vienna`). Gibt eine Abmeldefunktion zurück. */
   subscribe(onChange: () => void, onStatus: (live: boolean) => void): () => void;
 }

@@ -26,7 +26,7 @@ export function FamilyVideo() {
   const { t, lang } = useLanguage();
   const store = useTripStore();
   const video = useAssetUrl(store, 'familyVideo');
-  const poster = useAssetUrl(store, 'familyVideoPoster');
+  const poster = useAssetUrl(store, 'videoPoster');
   const ref = useRef<HTMLVideoElement>(null);
   const [started, setStarted] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -41,8 +41,8 @@ export function FamilyVideo() {
   };
 
   return (
-    <section className="film" aria-label={t.finale.video.title}>
-      <p className="serif-lead">{t.finale.video.title}</p>
+    <section className="film" aria-label={t.familyStory.video.title}>
+      <p className="serif-lead">{t.familyStory.video.title}</p>
       <div className="film__frame">
         <video
           ref={ref}
@@ -58,7 +58,7 @@ export function FamilyVideo() {
         {!started && (
           <button type="button" className="film__play" onClick={play}>
             <span className="film__play-icon" aria-hidden="true" />
-            <span>{t.finale.video.play}</span>
+            <span>{t.familyStory.video.play}</span>
           </button>
         )}
       </div>
@@ -67,7 +67,7 @@ export function FamilyVideo() {
           {t.errors.mediaFailed}
         </p>
       )}
-      <Transcript label={t.finale.video.transcript} text={transcript} />
+      <Transcript label={t.familyStory.video.transcript} text={transcript} />
     </section>
   );
 }
@@ -116,7 +116,7 @@ function Voice({ message }: { message: ChildMessage }) {
       <button
         type="button"
         className="voice__button"
-        aria-label={`${playing ? t.finale.voices.pause : t.finale.voices.play}: ${label}`}
+        aria-label={`${playing ? t.familyStory.voices.pause : t.familyStory.voices.play}: ${label}`}
         onClick={toggle}
         data-playing={playing ? 'true' : 'false'}
       >
@@ -131,7 +131,7 @@ function Voice({ message }: { message: ChildMessage }) {
           max={duration || 0}
           step={0.1}
           value={Math.min(time, duration || 0)}
-          aria-label={`${t.finale.voices.progress}: ${label}`}
+          aria-label={`${t.familyStory.voices.progress}: ${label}`}
           aria-valuetext={`${formatTime(time)} / ${formatTime(duration)}`}
           onChange={(e) => {
             if (ref.current) ref.current.currentTime = Number(e.target.value);
@@ -147,7 +147,7 @@ function Voice({ message }: { message: ChildMessage }) {
             {t.errors.mediaFailed}
           </p>
         )}
-        <Transcript label={t.finale.voices.transcript} text={message.transcript ? localize(message.transcript, lang) : null} />
+        <Transcript label={t.familyStory.voices.transcript} text={message.transcript ? localize(message.transcript, lang) : null} />
       </div>
     </div>
   );
@@ -159,8 +159,8 @@ export function ChildrenVoices() {
   const available = family.familyMessages.filter((m) => store.hasAsset(m.slot));
   if (available.length === 0) return null;
   return (
-    <section className="voices" aria-label={t.finale.voices.title}>
-      <p className="serif-lead">{t.finale.voices.title}</p>
+    <section className="voices" aria-label={t.familyStory.voices.title}>
+      <p className="serif-lead">{t.familyStory.voices.title}</p>
       {available.map((m) => (
         <Voice key={m.slot} message={m} />
       ))}

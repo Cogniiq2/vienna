@@ -10,7 +10,7 @@ export interface MemoryResult {
   missing: number;
 }
 
-const MEMORY_SLOTS: readonly MemoryAssetSlot[] = ['gradskiKlub', 'wedding', 'familyEarly', 'familyCurrent', 'parentsNow'];
+const MEMORY_SLOTS: readonly MemoryAssetSlot[] = ['gradskiKlub', 'wedding', 'familyEarly', 'familyCurrent', 'parentsCurrent'];
 
 /** Antworten so, wie sie im Album stehen sollen (Auswahl-Schlüssel → Beschriftung). */
 export function displayAnswers(t: Dictionary, responses: Partial<Record<QuestionId, { value: string }>>): Partial<Record<QuestionId, string>> {
@@ -43,11 +43,14 @@ export async function buildMemory(store: TripStore, lang: Language, t: Dictionar
         else missing++;
       }),
     ),
-    Promise.all(MEMORY_SLOTS.map(async (slot) => [slot, await store.getAssetBlob(slot)] as const)),
+    Promise.all(MEMORY_SLOTS.filter((slot) => store.hasAsset(slot)).map(async (slot) => [slot, await store.getAssetBlob(slot)] as const)),
   ]);
 
   const assets: Partial<Record<MemoryAssetSlot, Blob>> = {};
   for (const [slot, blob] of assetEntries) if (blob) assets[slot] = blob;
+
+  const assetMeta: Partial<Record<MemoryAssetSlot, { caption: string | null; year: string | null; location: string | null }>> = {};
+  for (const slot of MEMORY_SLOTS) assetMeta[slot] = store.getAssetMeta(slot, lang);
 
   const { generateMemoryPdf } = await import('../pdf/generateMemory');
   const blob = await generateMemoryPdf({
@@ -55,6 +58,7 @@ export async function buildMemory(store: TripStore, lang: Language, t: Dictionar
     t,
     photos,
     assets,
+    assetMeta,
     answers: displayAnswers(t, state.responses),
     completed: state.progress.completed,
   });

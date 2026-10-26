@@ -7,11 +7,21 @@ const none = () => false;
 const only = (...slots: AssetSlot[]) => (s: AssetSlot) => slots.includes(s);
 
 describe('story frames', () => {
-  it('drops photo-only frames when the photo is missing but keeps text', () => {
-    const frames = visibleFrames(sr.finale.bonus, { photos: {} }, none);
+  it('ends Tuesday quietly: without a family photo only text + signature remain', () => {
+    const frames = visibleFrames(sr.finale.closing, { photos: {} }, none);
     expect(frames.some((f) => f.asset)).toBe(false);
     expect(frames.find((f) => f.lines.length === 0 && !f.signature)).toBeUndefined();
     expect(frames.at(-1)?.signature).toBe(true);
+  });
+
+  it('shows the family photo at the very end of Tuesday once it is uploaded', () => {
+    const frames = visibleFrames(sr.finale.closing, { photos: {} }, only('familyCurrent'));
+    expect(frames.filter((f) => f.asset).map((f) => f.asset)).toEqual(['familyCurrent']);
+  });
+
+  it('drops photo-only frames of the family story when photos are missing', () => {
+    const frames = visibleFrames(sr.interludes.wedding, { photos: {} }, none);
+    expect(frames.every((f) => !f.asset)).toBe(true);
   });
 
   it('keeps archival photos that exist', () => {
@@ -21,19 +31,26 @@ describe('story frames', () => {
 
   it('uses the parents photo, then tonight’s dinner photo, for „ви сте Милица и Милош.“', () => {
     const dinner = { chapterId: 'dinner' as const, capturedAt: '', status: 'local' as const, remotePath: null, hasLocal: true };
-    expect(resolveTodaySource({ photos: {} }, only('parentsNow'))).toEqual({ kind: 'asset', slot: 'parentsNow' });
+    expect(resolveTodaySource({ photos: {} }, only('parentsCurrent'))).toEqual({ kind: 'asset', slot: 'parentsCurrent' });
     expect(resolveTodaySource({ photos: { dinner } }, none)).toEqual({ kind: 'photo', chapterId: 'dinner' });
     expect(resolveTodaySource({ photos: {} }, none)).toBeNull();
   });
 });
 
 describe('finale flow', () => {
-  it('goes letter → media → bonus → album', async () => {
+  it('ends Tuesday with letter → closing → album', async () => {
     const { nextFinaleStage } = await import('./frames');
-    expect(nextFinaleStage([], true)).toBe('more');
-    expect(nextFinaleStage(['finale:more'], true)).toBe('messages');
-    expect(nextFinaleStage(['finale:more'], false)).toBe('bonus');
-    expect(nextFinaleStage(['finale:more', 'finale:messages'], true)).toBe('bonus');
-    expect(nextFinaleStage(['finale:more', 'finale:messages', 'finale:bonus'], true)).toBeNull();
+    expect(nextFinaleStage([])).toBe('letter');
+    expect(nextFinaleStage(['finale:letter'])).toBe('closing');
+    expect(nextFinaleStage(['finale:letter', 'finale:closing'])).toBeNull();
+  });
+
+  it('offers the family story only when there is material beyond the current family photo', async () => {
+    const { hasFamilyStory } = await import('./frames');
+    expect(hasFamilyStory(none)).toBe(false);
+    expect(hasFamilyStory(only('familyCurrent'))).toBe(false);
+    expect(hasFamilyStory(only('wedding'))).toBe(true);
+    expect(hasFamilyStory(only('audioLazar'))).toBe(true);
+    expect(hasFamilyStory(only('familyVideo'))).toBe(true);
   });
 });

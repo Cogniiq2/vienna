@@ -1,33 +1,34 @@
 /**
- * Struktur der sechs Kapitel und der Memory Interludes dazwischen.
+ * Struktur des Dienstags (fünf Kapitel) und der Familiengeschichte (Memory-Seiten, getrennt vom Tag).
  * Texte stehen in src/content/{sr,de}.ts, Persönliches in src/config/family.ts,
  * Reisedaten in src/config/trip.ts. Hier nur Ablauf & Verhalten.
  */
 
-export const CHAPTER_IDS = ['morning', 'mission', 'vienna', 'tennis', 'spa', 'dinner'] as const;
+export const CHAPTER_IDS = ['morning', 'mission', 'tennis', 'spa', 'dinner'] as const;
 export type ChapterId = (typeof CHAPTER_IDS)[number];
 
 export const INTERLUDE_IDS = ['gradskiKlub', 'wedding', 'family', 'work'] as const;
 export type InterludeId = (typeof INTERLUDE_IDS)[number];
 
-/** Linearer Ablauf des Tages: Erinnerung → Aktivität → Erinnerung → … */
+/**
+ * Ablauf des Dienstags: nur die fünf Kapitel, keine biografischen Seiten dazwischen.
+ * (Der Typ erlaubt Interludes, damit der Ablauf später ohne Umbau erweiterbar bleibt.)
+ */
 export type StoryStep = { kind: 'interlude'; id: InterludeId } | { kind: 'chapter'; id: ChapterId };
 
 export const STORY: readonly StoryStep[] = [
-  { kind: 'interlude', id: 'gradskiKlub' },
   { kind: 'chapter', id: 'morning' },
-  { kind: 'interlude', id: 'wedding' },
   { kind: 'chapter', id: 'mission' },
-  { kind: 'interlude', id: 'family' },
-  { kind: 'chapter', id: 'vienna' },
   { kind: 'chapter', id: 'tennis' },
-  { kind: 'interlude', id: 'work' },
   { kind: 'chapter', id: 'spa' },
   { kind: 'chapter', id: 'dinner' },
 ];
 
-/** Stationen nach dem letzten Kapitel. */
-export const FINALE_STAGES = ['more', 'messages', 'bonus'] as const;
+/** Reihenfolge der Familiengeschichte („Ваша прича.“) – separat vom Tag, erscheint erst mit Fotos. */
+export const FAMILY_STORY: readonly InterludeId[] = ['gradskiKlub', 'wedding', 'family', 'work'];
+
+/** Stationen nach dem letzten Kapitel: Brief → kurzer, stiller Abschluss → „Ваш дан.“ */
+export const FINALE_STAGES = ['letter', 'closing'] as const;
 export type FinaleStage = (typeof FINALE_STAGES)[number];
 
 export const QUESTION_IDS = [
@@ -94,16 +95,6 @@ export const CHAPTERS: readonly ChapterDefinition[] = [
     info: 'hotel-gym',
     questions: [],
     taskStyle: 'steps',
-    music: null,
-  },
-  {
-    id: 'vienna',
-    photoRequired: false,
-    photo: false,
-    capture: 'environment',
-    info: 'route',
-    questions: [],
-    taskStyle: 'plain',
     music: null,
   },
   {

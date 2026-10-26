@@ -1,17 +1,17 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CHAPTER_IDS, QUESTIONS, STORY, type QuestionId } from '../config/chapters';
-import { ASSET_SLOTS, type AssetSlot } from '../config/family';
 import { de } from '../content/de';
 import { env } from '../lib/env';
 import { callRpc, getSupabase } from '../lib/supabaseClient';
 import { createAdminApi } from './api';
+import { AssetManager } from './AssetManager';
 import { createDemoAdminApi } from './demoApi';
 import type { AdminApi, AdminTrip } from './types';
 
 /**
  * Privates Dashboard für die Kinder. Zugriff nur mit E-Mail-Login (Magic Link / Code)
- * UND Eintrag in private.admins – geprüft in der Datenbank, nicht im Browser.
+ * UND Eintrag in vienna.admins – geprüft in der Datenbank, nicht im Browser.
  */
 export function AdminApp() {
   const demo = env.debugAvailable && new URLSearchParams(window.location.search).get('demo') === '1';
@@ -65,7 +65,7 @@ function AuthGate() {
     const sb = await getSupabase('admin');
     const { data } = await sb.auth.getSession();
     if (!data.session) return setState({ kind: 'signedOut' });
-    const { data: who } = await callRpc(sb, 'admin_whoami');
+    const { data: who } = await callRpc(sb, 'vienna_admin_whoami');
     const info = who as { email?: string; is_admin?: boolean } | null;
     const email = info?.email ?? data.session.user.email ?? '';
     setState(info?.is_admin ? { kind: 'admin', email, sb } : { kind: 'forbidden', email });
@@ -93,7 +93,7 @@ function AuthGate() {
     return (
       <AdminFrame>
         <p>
-          Angemeldet als <b>{state.email}</b>, aber ohne Admin-Rechte. Eintrag in <code>private.admins</code> fehlt.
+          Angemeldet als <b>{state.email}</b>, aber ohne Admin-Rechte. Eintrag in <code>vienna.admins</code> fehlt.
         </p>
         <button type="button" className="admin__btn" onClick={() => void signOut()}>
           Abmelden
@@ -208,8 +208,11 @@ function Dashboard({ api, email, onSignOut }: { api: AdminApi; email: string; on
       setTrips(data);
       setError(null);
       setUpdatedAt(new Date().toISOString());
-      const paths = data.flatMap((t) => t.uploads_detail.map((u) => u.path));
-      const urls = await api.signedPhotoUrls(paths);
+      const paths = data.flatMap((t) => [
+        ...t.uploads.map((u) => u.path),
+        ...t.assets.flatMap((a) => (a.path ? [a.path] : [])),
+      ]);
+      const urls = await api.signedUrls(paths);
       setPhotoUrls((prev) => ({ ...prev, ...urls }));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Laden fehlgeschlagen');
@@ -368,9 +371,9 @@ function TripPanel({
       </div>
 
       <div className="admin__card">
-        <h3>Fotos ({trip.uploads_detail.length})</h3>
+        <h3>Fotos ({trip.uploads.length})</h3>
         <div className="admin__photos">
-          {trip.uploads_detail.map((u) => (
+          {trip.uploads.map((u) => (
             <figure key={u.path}>
               {photoUrls[u.path] ? <img src={photoUrls[u.path]} alt={u.chapter_id} loading="lazy" /> : <div className="admin__ph" />}
               <figcaption>
@@ -396,107 +399,18 @@ function TripPanel({
       <div className="admin__card">
         <h3>Antworten</h3>
         <ul className="admin__list">
-          {(trip.responses ?? []).map((r) => (
+          {(trip.answers ?? []).map((r) => (
             <li key={r.question_id}>
               <b>{de.questions[r.question_id as QuestionId]?.pdfLabel ?? r.question_id}:</b> {answerLabel(r.question_id, r.value)}{' '}
               <small>· {fmt(r.updated_at)}</small>
             </li>
           ))}
-          {(trip.responses ?? []).length === 0 && <li>Noch keine.</li>}
+          {(trip.answers ?? []).length === 0 && <li>Noch keine.</li>}
         </ul>
       </div>
 
-      <AssetManager trip={trip} api={api} onChanged={onChanged} />
+      <AssetManager trip={trip} api={api} urls={photoUrls} onChanged={onChanged} />
     </section>
   );
 }
 
-const SLOT_LABELS: Record<AssetSlot, string> = {
-  gradskiKlub: 'Gradski Klub (altes Foto)',
-  wedding: 'Hochzeit',
-  familyEarly: 'Kinder klein / Urlaub',
-  familyCurrent: 'Familie heute (alle fünf)',
-  parentsNow: 'Mama & Tata heute (optional)',
-  familyVideo: 'Familienvideo (mp4/mov, max. Projektlimit)',
-  familyVideoPoster: 'Video-Vorschaubild',
-  audioDjordje: 'Sprachnachricht Đorđe',
-  audioBogdana: 'Sprachnachricht Bogdana',
-  audioLazar: 'Sprachnachricht Lazar',
-};
-
-function AssetManager({ trip, api, onChanged }: { trip: AdminTrip; api: AdminApi; onChanged: () => void }) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const assets = new Map((trip.assets ?? []).map((a) => [a.slot, a]));
-
-  const upload = async (slot: AssetSlot, file: File | undefined) => {
-    if (!file) return;
-    setBusy(slot);
-    setError(null);
-    try {
-      await api.uploadAsset(trip.trip_id, slot, file);
-      onChanged();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload fehlgeschlagen');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const preview = async (path: string) => {
-    const url = await api.signedAssetUrl(path);
-    if (url) window.open(url, '_blank', 'noopener');
-  };
-
-  return (
-    <div className="admin__card">
-      <h3>Familien-Assets (privat)</h3>
-      <p className="admin__note">
-        Liegen im privaten Bucket <code>family</code>. Die Eltern sehen sie nur über kurzlebige signierte Links.
-      </p>
-      <ul className="admin__assets">
-        {ASSET_SLOTS.map((slot) => {
-          const asset = assets.get(slot);
-          const accept = slot.startsWith('audio') ? 'audio/*' : slot === 'familyVideo' ? 'video/*' : 'image/*';
-          return (
-            <li key={slot}>
-              <span>
-                {SLOT_LABELS[slot]} <small data-ok={asset ? 'true' : 'false'}>{asset ? '✓ vorhanden' : '— fehlt'}</small>
-              </span>
-              <span className="admin__asset-actions">
-                <label className="admin__btn">
-                  {busy === slot ? 'lädt…' : asset ? 'ersetzen' : 'hochladen'}
-                  <input
-                    type="file"
-                    accept={accept}
-                    hidden
-                    disabled={busy !== null}
-                    onChange={(e) => {
-                      void upload(slot, e.target.files?.[0]);
-                      e.target.value = '';
-                    }}
-                  />
-                </label>
-                {asset && (
-                  <>
-                    <button type="button" className="admin__link" onClick={() => void preview(asset.path)}>
-                      ansehen
-                    </button>
-                    <button
-                      type="button"
-                      className="admin__link"
-                      onClick={() => void api.removeAsset(trip.trip_id, slot).then(onChanged)}
-                    >
-                      entfernen
-                    </button>
-                  </>
-                )}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      {error && <p className="admin__error">{error}</p>}
-    </div>
-  );
-}

@@ -1,7 +1,7 @@
 import { CHAPTER_IDS, type ChapterId, type QuestionId } from '../config/chapters';
 
 /** Familienfotos, die im Album vorkommen können. */
-export type MemoryAssetSlot = 'gradskiKlub' | 'wedding' | 'familyEarly' | 'familyCurrent' | 'parentsNow';
+export type MemoryAssetSlot = 'gradskiKlub' | 'wedding' | 'familyEarly' | 'familyCurrent' | 'parentsCurrent';
 
 export type PagePlan =
   | { kind: 'cover'; photo: ChapterId | null }
@@ -22,13 +22,6 @@ export const QUOTE_QUESTIONS: readonly QuestionId[] = [
   'epilogue.takeaway',
 ];
 
-/** Erinnerungsseiten stehen VOR diesen Kapiteln (wie in der App). */
-const MEMORY_BEFORE: Partial<Record<ChapterId, 'gradskiKlub' | 'wedding' | 'familyEarly'>> = {
-  morning: 'gradskiKlub',
-  mission: 'wedding',
-  vienna: 'familyEarly',
-};
-
 export interface PlanInput {
   photos: ReadonlySet<ChapterId>;
   assets: ReadonlySet<MemoryAssetSlot>;
@@ -36,10 +29,11 @@ export interface PlanInput {
   completed: readonly ChapterId[];
 }
 
+const ARCHIVE: readonly ('gradskiKlub' | 'wedding' | 'familyEarly')[] = ['gradskiKlub', 'wedding', 'familyEarly'];
+
 /**
- * Reihenfolge des Albums – rein & testbar:
- * Cover → Brief → (Gradski Klub) → I → (Hochzeit) → II → (Familie) → III → IV → Familiengeschichte → V → VI
- * → eure Worte → (Familie heute) → „Јел’ знате?“.
+ * Reihenfolge des Albums – rein & testbar. Der Tag bleibt für sich, die Familiengeschichte folgt danach:
+ * Cover → Brief → I–V → eure Worte → (Familienalbum: alte Fotos + Geschichte) → (Familie heute) → „Јел’ знате?“.
  * Fehlt ein Foto, fällt nur die jeweilige Seite weg – nie das ganze PDF.
  */
 export function planMemoryPages(input: PlanInput): PagePlan[] {
@@ -49,15 +43,16 @@ export function planMemoryPages(input: PlanInput): PagePlan[] {
   pages.push({ kind: 'letter' });
 
   for (const id of CHAPTER_IDS) {
-    const memory = MEMORY_BEFORE[id];
-    if (memory && input.assets.has(memory)) pages.push({ kind: 'memory', slot: memory });
-    if (id === 'spa') pages.push({ kind: 'story' });
     if (input.photos.has(id) || input.completed.includes(id)) pages.push({ kind: 'chapter', id });
   }
 
   const quotes = QUOTE_QUESTIONS.filter((q) => input.answers[q]?.trim());
   // Lange Antworten bekommen mehr Platz: höchstens 3 Zitate pro Seite.
   for (let i = 0; i < quotes.length; i += 3) pages.push({ kind: 'answers', questions: quotes.slice(i, i + 3) });
+
+  const archive = ARCHIVE.filter((slot) => input.assets.has(slot));
+  for (const slot of archive) pages.push({ kind: 'memory', slot });
+  if (archive.length > 0) pages.push({ kind: 'story' });
 
   if (input.assets.has('familyCurrent')) pages.push({ kind: 'family' });
   pages.push({ kind: 'closing' });

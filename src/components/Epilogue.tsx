@@ -7,7 +7,9 @@ import { useTripState, useTripStore } from '../state/context';
 import { ArrowBackIcon, ArrowIcon, PinIcon } from './Icons';
 import { MemoryGenerator } from './MemoryGenerator';
 import { Reveal } from './Reveal';
+import { ChapterInfo } from './InfoCards';
 import { StoryQuestion } from './StoryQuestion';
+import { TaskList } from './TaskList';
 
 /** Mittwochmorgen: kein Kapitel 7, keine Mission. Nur noch ein bisschen Wien und eine letzte Frage. */
 export function Epilogue({ onBack }: { onBack: () => void }) {
@@ -37,9 +39,28 @@ export function Epilogue({ onBack }: { onBack: () => void }) {
         ))}
       </div>
 
+      <div className="story__screen facts">
+        {e.facts.map((fact, i) => (
+          <Reveal key={fact.title}>
+            <div className="fact">
+              <span className="fact__index" aria-hidden="true">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              <h2 className="fact__title">{fact.title}</h2>
+              <p className="body-text">{fact.text}</p>
+            </div>
+          </Reveal>
+        ))}
+        <Reveal>
+          <TaskList tasks={[e.walk]} style="plain" title={e.locationsTitle} />
+        </Reveal>
+        <Reveal>
+          <ChapterInfo kind="route" />
+        </Reveal>
+      </div>
+
       {trip.epilogue.locations.length > 0 && (
         <div className="story__screen facts">
-          <p className="eyebrow">{e.locationsTitle}</p>
           {trip.epilogue.locations.map((loc, i) => {
             const href = navigationHref(loc.navigationUrl, loc.address ?? loc.name);
             return (

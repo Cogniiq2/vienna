@@ -1,15 +1,17 @@
-import { family, type AssetSlot } from '../config/family';
+import type { AssetSlot } from '../config/family';
 import type { FrameAsset } from '../content';
-import { localize, useLanguage } from '../i18n/context';
+import { useLanguage } from '../i18n/context';
 import { ARCHIVAL_SLOTS, resolveTodaySource } from '../lib/frames';
 import { useAssetUrl, usePhotoUrl } from '../lib/hooks';
 import { useTripState, useTripStore } from '../state/context';
 
+/** Bildunterschrift: im Admin gepflegt → Default aus family.ts → keine. */
 function Caption({ slot }: { slot: AssetSlot }) {
   const { lang } = useLanguage();
-  if (!(slot in family.memoryAssets)) return null;
-  const meta = family.memoryAssets[slot as keyof typeof family.memoryAssets];
-  const parts = [meta.caption ? localize(meta.caption, lang) : null, meta.location, meta.year].filter(Boolean);
+  const store = useTripStore();
+  useTripState(); // neu rendern, wenn Metadaten vom Server kommen
+  const meta = store.getAssetMeta(slot, lang);
+  const parts = [meta.caption, meta.location, meta.year].filter(Boolean);
   if (parts.length === 0) return null;
   return <figcaption className="memory-photo__caption hand">{parts.join(' · ')}</figcaption>;
 }

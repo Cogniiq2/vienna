@@ -12,7 +12,6 @@ import { CHAPTER_IDS, type ChapterId, type QuestionId } from '../config/chapters
 import { family } from '../config/family';
 import { trip } from '../config/trip';
 import { MOTIF, type Dictionary, type Language } from '../content';
-import { localize } from '../i18n/context';
 import { formatClock, toRoman } from '../lib/format';
 import { cropForFrame } from '../lib/image';
 import { clampLines, sanitizeForFont, wrapText } from './layout';
@@ -38,6 +37,8 @@ export interface MemoryInput {
   photos: Partial<Record<ChapterId, MemoryPhoto>>;
   /** Familienfotos (alte Fotos, Familie heute). Fehlende werden ausgelassen. */
   assets: Partial<Record<MemoryAssetSlot, Blob>>;
+  /** Bildunterschriften der Familienfotos (Admin → Default), bereits in der Zielsprache. */
+  assetMeta: Partial<Record<MemoryAssetSlot, { caption: string | null; year: string | null; location: string | null }>>;
   /** Antworten in Anzeigeform (Auswahl bereits übersetzt). */
   answers: Partial<Record<QuestionId, string>>;
   /** Chapters, die abgeschlossen wurden (auch ohne Foto). */
@@ -387,8 +388,8 @@ export async function generateMemoryPdf(input: MemoryInput): Promise<Blob> {
       const photoTop = MARGIN_TOP + 40;
       drawMatted(page, archival.img, x, photoTop, archival.w, archival.h);
       let top = photoTop + archival.h + 22;
-      const meta = family.memoryAssets[slot];
-      const caption = [meta.caption ? localize(meta.caption, lang) : null, meta.location, meta.year].filter(Boolean).join(' · ');
+      const meta = input.assetMeta[slot];
+      const caption = [meta?.caption, meta?.location, meta?.year].filter(Boolean).join(' · ');
       if (caption) top = ts.paragraph(caption, top, { ...S.hand, size: 14 }, { align: 'center' }) + 10;
       top = ts.paragraph(text, top + 10, { font: fonts.display, size: 24, color: C.ink, lineHeight: 1.22 }, { align: 'center', x: MARGIN_X + 20, width: CONTENT_W - 40 });
       if (small) ts.paragraph(small, top + 10, { ...S.small, color: C.muted }, { align: 'center', x: MARGIN_X + 20, width: CONTENT_W - 40 });
@@ -499,7 +500,7 @@ export async function generateMemoryPdf(input: MemoryInput): Promise<Blob> {
       pageNo++;
       const top = MARGIN_TOP + 50;
       drawMatted(page, image.img, (PAGE_W - image.w) / 2, top, image.w, image.h);
-      const thanks = t.finale.bonus.find((f) => f.asset === 'familyCurrent')?.lines.join(' ') ?? '';
+      const thanks = t.finale.closing.find((f) => f.asset === 'familyCurrent')?.lines.join(' ') ?? '';
       ts.paragraph(thanks, top + image.h + 40, { font: fonts.display, size: 26, color: C.ink }, { align: 'center' });
       folio(ts, fonts, t, pageNo);
     },

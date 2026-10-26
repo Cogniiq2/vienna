@@ -3,7 +3,7 @@ import { CHAPTERS } from '../config/chapters';
 import { de } from './de';
 import { MOTIF } from './types';
 
-const ASSET_KEYS = ['gradskiKlub', 'wedding', 'familyEarly', 'familyCurrent', 'parentsToday', 'parentsNow'];
+const ASSET_KEYS = ['gradskiKlub', 'wedding', 'familyEarly', 'familyCurrent', 'parentsToday', 'parentsCurrent'];
 import { sr } from './sr';
 
 type Shape = string | number | boolean | null | Shape[] | { [k: string]: Shape };
@@ -57,8 +57,8 @@ describe('i18n', () => {
     }
   });
 
-  it('stays within the six-chapter rule', () => {
-    expect(CHAPTERS).toHaveLength(6);
+  it('keeps Tuesday to five chapters (max. six)', () => {
+    expect(CHAPTERS).toHaveLength(5);
   });
 
   it('keeps the family motif untranslated and uses it sparingly', () => {
@@ -66,8 +66,8 @@ describe('i18n', () => {
     expect(MOTIF).toBe('Јел’ знате?');
     expect(count(sr)).toBe(1);
     expect(count(de)).toBe(1);
-    expect(sr.finale.bonus.some((f) => f.lines.includes(MOTIF))).toBe(true);
-    expect(de.finale.bonus.some((f) => f.lines.includes(MOTIF))).toBe(true);
+    expect(sr.finale.closing[0]?.lines).toEqual([MOTIF]);
+    expect(de.finale.closing[0]?.lines).toEqual([MOTIF]);
   });
 
   it('never explains the motif', () => {

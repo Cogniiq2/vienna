@@ -91,23 +91,6 @@ export function ChapterView({ chapterId, mode, onCompleted }: Props) {
         </div>
       )}
 
-      {/* Wien in drei kleinen Geschichten */}
-      {c.facts && (
-        <div className="story__screen facts">
-          {c.facts.map((fact, i) => (
-            <Reveal key={fact.title} delay={i * 120}>
-              <div className="fact">
-                <span className="fact__index" aria-hidden="true">
-                  {String(i + 1).padStart(2, '0')}
-                </span>
-                <h2 className="fact__title">{fact.title}</h2>
-                <p className="body-text">{fact.text}</p>
-              </div>
-            </Reveal>
-          ))}
-        </div>
-      )}
-
       {/* Die Regel beim Dinner */}
       {c.rule && (
         <div className="story__screen rule-reveal">

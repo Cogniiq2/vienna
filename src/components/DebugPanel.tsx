@@ -25,6 +25,7 @@ const STEP_LABELS: Record<string, string> = {
   family: 'Familie',
   work: 'Arbeit',
 };
+// Interludes stehen aktuell nicht im Dienstag (STORY); die Labels bleiben für spätere Abläufe.
 
 /**
  * Entwickler-Werkzeug (nicht für die Eltern):
@@ -67,11 +68,17 @@ export function DebugPanel() {
 
   const simulateFamilyPhotos = () =>
     run('Familienfotos', async () => {
-      const slots: AssetSlot[] = ['gradskiKlub', 'wedding', 'familyEarly', 'familyCurrent'];
+      const slots: AssetSlot[] = ['familyCurrent', 'parentsCurrent', 'gradskiKlub', 'wedding', 'familyEarly'];
       for (const [i, slot] of slots.entries()) {
         const image = await createPlaceholderPhoto(slot, i + 2);
         store.debugSetAsset(slot, URL.createObjectURL(image.blob));
       }
+    });
+
+  const simulateFamilyCurrent = () =>
+    run('Familienfoto', async () => {
+      const image = await createPlaceholderPhoto('familyCurrent', 2);
+      store.debugSetAsset('familyCurrent', URL.createObjectURL(image.blob));
     });
 
   const simulateAudio = () =>
@@ -133,24 +140,21 @@ export function DebugPanel() {
 
       <p className="debug__label">Finale</p>
       <div className="debug__grid">
-        <button type="button" disabled={disabled} onClick={() => void jump('Finale', finaleAt(0))}>
-          Noch etwas
+        <button type="button" disabled={disabled} onClick={() => void jump('Brief', finaleAt(0))}>
+          Brief
         </button>
-        <button type="button" disabled={disabled} onClick={() => void jump('Video/Audio', finaleAt(1))}>
-          Video/Audio
+        <button type="button" disabled={disabled} onClick={() => void jump('Abschluss', finaleAt(1))}>
+          Abschluss
         </button>
-        <button type="button" disabled={disabled} onClick={() => void jump('Bonus', finaleAt(2))}>
-          Bonus
-        </button>
-        <button type="button" disabled={disabled} onClick={() => void jump('Ваш дан', finaleAt(3))}>
-          Album / PDF
+        <button type="button" disabled={disabled} onClick={() => void jump('Ваш дан', finaleAt(2))}>
+          Album / PDF / Geschichte
         </button>
         <button
           type="button"
           disabled={disabled}
           onClick={() => {
             forceEpilogue();
-            void jump('Epilog freigeschaltet (Album öffnen)', finaleAt(3));
+            void jump('Epilog freigeschaltet (Album öffnen)', finaleAt(2));
           }}
         >
           Epilog
@@ -165,8 +169,11 @@ export function DebugPanel() {
         <button type="button" disabled={disabled} onClick={() => void simulatePhotos(true)}>
           Alle Fotos + Antworten
         </button>
+        <button type="button" disabled={disabled} onClick={() => void simulateFamilyCurrent()}>
+          Nur Familienfoto
+        </button>
         <button type="button" disabled={disabled} onClick={() => void simulateFamilyPhotos()}>
-          Familienfotos
+          Alle Familienfotos
         </button>
         <button type="button" disabled={disabled} onClick={() => void simulateAudio()}>
           Audios

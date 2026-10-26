@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CHAPTER_IDS, seenKey, STORY, type ChapterId } from '../config/chapters';
 import { useLanguage } from '../i18n/context';
-import { toRoman } from '../lib/format';
 import { currentChapterIndex, currentStepIndex } from '../lib/progress';
 import { useTripState, useTripStore } from '../state/context';
 import { ChapterView } from './ChapterView';
@@ -59,14 +58,12 @@ export function Journey() {
   if (!step) return null;
 
   if (step.kind === 'interlude' && !effectiveViewing) {
-    const doneLabel = nextStep?.kind === 'chapter' ? t.chapter.toChapter(toRoman(CHAPTER_IDS.indexOf(nextStep.id) + 1)) : undefined;
     return (
       <div className="journey journey--interlude">
         <StorySequence
           key={step.id}
           frames={t.interludes[step.id]}
           onDone={finishInterlude}
-          doneLabel={doneLabel}
           eyebrow={t.pdf.memoryEyebrow}
         />
         {unlock !== null && <UnlockInterlude index={unlock} onDone={endUnlock} />}

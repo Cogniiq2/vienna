@@ -1,4 +1,3 @@
--- Minimaler Nachbau der Supabase-Rollen/Schemas, NUR für lokale Tests mit einem leeren Postgres 16.
 -- Minimaler Supabase-Stub
 do $$ begin if not exists (select 1 from pg_roles where rolname='anon') then create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls; end if; end $$;
 create schema extensions; create schema auth; create schema storage;

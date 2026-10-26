@@ -18,11 +18,18 @@ export interface LiveMessage {
   readAt: string | null;
 }
 
-/** Ein im Dashboard hochgeladenes Familien-Asset (privater Bucket). */
+/** Ein Familien-Asset aus dem Admin (privater Bucket) inkl. optionaler Metadaten. */
 export interface RemoteAsset {
   slot: AssetSlot;
-  path: string;
+  /** null = nur Metadaten gepflegt, noch keine Datei. */
+  path: string | null;
   mime: string | null;
+  captionSr: string | null;
+  captionDe: string | null;
+  year: string | null;
+  location: string | null;
+  note: string | null;
+  updatedAt: string | null;
 }
 
 export interface RemoteSnapshot {
